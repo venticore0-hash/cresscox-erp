@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CresscoX ERP - Login / Register</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #0b0b0d;
+      --panel: #141418;
+      --panel-2: #1b1b21;
+      --text: #ffffff;
+      --muted: #b7b7c2;
+      --red: #e11d2e;
+      --red-dark: #b40f1e;
+      --border: rgba(255, 255, 255, 0.08);
+      --success: #16a34a;
+      --warning: #f59e0b;
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+      --radius: 20px;
+    }
+
+    body {
+      min-height: 100vh;
+      font-family: Arial, Helvetica, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(225, 29, 46, 0.16), transparent 30%),
+        radial-gradient(circle at bottom right, rgba(225, 29, 46, 0.10), transparent 25%),
+        var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .auth-wrapper {
+      width: 100%;
+      max-width: 1100px;
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 28px;
+      align-items: stretch;
+    }
+
+    .brand-panel,
+    .auth-panel {
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .brand-panel {
+      padding: 42px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 700px;
+    }
+
+    .logo-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 26px;
+      flex-wrap: wrap;
+    }
+
+    .logo-main {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+    }
+
+    .logo-mark {
+      color: var(--red);
+      font-size: 2rem;
+      font-weight: 900;
+    }
+
+    .brand-title {
+      font-size: 2.5rem;
+      line-height: 1.1;
+      margin-bottom: 18px;
+      font-weight: 800;
+    }
+
+    .brand-text {
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 1rem;
+      max-width: 520px;
+    }
+
+    .feature-list {
+      margin-top: 34px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .feature-item {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+    }
+
+    .feature-item strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 1rem;
+    }
+
+    .feature-item span {
+      color: var(--muted);
+      font-size: 0.94rem;
+      line-height: 1.5;
+    }
+
+    .brand-footer {
+      margin-top: 30px;
+      color: #d8d8df;
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+
+    .auth-panel {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .auth-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 28px;
+    }
+
+    .top-badge {
+      display: inline-block;
+      background: rgba(225, 29, 46, 0.14);
+      color: #ffd7dc;
+      border: 1px solid rgba(225, 29, 46, 0.22);
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 0.86rem;
+      margin-bottom: 18px;
+    }
+
+    .auth-title {
+      font-size: 2rem;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .auth-subtitle {
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+
+    .tab-buttons {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 24px;
+      background: var(--panel-2);
+      padding: 6px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+    }
+
+    .tab-btn {
+      flex: 1;
+      border: none;
+      outline: none;
+      cursor: pointer;
+      padding: 14px 16px;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 700;
+      font-size: 0.95rem;
+      transition: 0.25s ease;
+    }
+
+    .tab-btn.active {
+      background: var(--red);
+      color: white;
+    }
+
+    .form-section {
+      display: none;
+      animation: fadeIn 0.25s ease;
+    }
+
+    .form-section.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .field label {
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: #f3f3f7;
+    }
+
+    .field input {
+      width: 100%;
+      padding: 14px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #101015;
+      color: white;
+      font-size: 0.96rem;
+      outline: none;
+      transition: 0.2s ease;
+    }
+
+    .field input:focus {
+      border-color: rgba(225, 29, 46, 0.55);
+      box-shadow: 0 0 0 3px rgba(225, 29, 46, 0.12);
+    }
+
+    .row-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+
+    .brand {
+    background: rgba(255, 255, 255, 0.09);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 28px;
+    padding: 12px !important;    /* Less padding = closer to corner */
+    margin-bottom: 18px;
+    text-align: left !important;  /* Force text left */
+    display: block !important;
+}
+
+.brand-top {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important; /* Forces logo to the left */
+    gap: 0 !important;
+    margin-bottom: 5px !important;
+}
+
+.brand p {
+    text-align: left !important;  /* Force paragraph left */
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 0.95rem;
+    line-height: 1.4;
+}
+    .btn {
+      width: 100%;
+      border: none;
+      outline: none;
+      cursor: pointer;
+      padding: 15px 18px;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 800;
+      transition: 0.25s ease;
+      margin-top: 6px;
+    }
+
+    .btn-primary {
+      background: var(--red);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--red-dark);
+      transform: translateY(-1px);
+    }
+
+    .helper-text {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    .message {
+      margin-bottom: 18px;
+      padding: 13px 14px;
+      border-radius: 12px;
+      font-size: 0.93rem;
+      line-height: 1.5;
+      display: none;
+      border: 1px solid transparent;
+    }
+
+    .message.show {
+      display: block;
+    }
+
+    .message.success {
+      background: rgba(22, 163, 74, 0.14);
+      border-color: rgba(22, 163, 74, 0.3);
+      color: #c7ffd9;
+    }
+
+    .message.error {
+      background: rgba(225, 29, 46, 0.12);
+      border-color: rgba(225, 29, 46, 0.28);
+      color: #ffd4d8;
+    }
+
+    .message.info {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.25);
+      color: #ffe4af;
+    }
+
+    .bottom-link {
+      margin-top: 18px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.93rem;
+    }
+
+    .bottom-link a {
+      color: #fff;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .mini-note {
+      margin-top: 20px;
+      padding: 14px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    .loading {
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    @media (max-width: 960px) {
+      .auth-wrapper {
+        grid-template-columns: 1fr;
+      }
+
+      .brand-panel {
+        min-height: auto;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .row-2 {
+        grid-template-columns: 1fr;
+      }
+
+      .brand-title {
+        font-size: 2rem;
+      }
+
+      .auth-title {
+        font-size: 1.6rem;
+      }
+
+      .brand-panel,
+      .auth-panel {
+        padding: 0;
+      }
+
+      .brand-panel {
+        padding: 24px;
+      }
+
+      .auth-panel {
+        padding: 16px;
+      }
+
+      .auth-card {
+        padding: 20px;
+      }
+    }
+  </style>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+  <div class="auth-wrapper">
+    <section class="brand-panel">
+      <div>
+        <div class="logo-box">
+          <span class="logo-main">CRESSCOX</span>
+          <span class="logo-mark">X•</span>
+        </div>
+
+        <h1 class="brand-title">ERP Access Portal for your business system</h1>
+        <p class="brand-text">
+          Login or create your workspace account to manage customers, inventory,
+          purchases, invoices, monthly sales, and profit records in one secure place.
+        </p>
+
+        <div class="feature-list">
+          <div class="feature-item">
+            <strong>Customer Management</strong>
+            <span>Store and manage customer records with contact details and history.</span>
+          </div>
+          <div class="feature-item">
+            <strong>Inventory Tracking</strong>
+            <span>Monitor stock quantities, prices, and low stock items clearly.</span>
+          </div>
+          <div class="feature-item">
+            <strong>Invoice and Sales Flow</strong>
+            <span>Create invoices, track monthly sales, and see profit data easily.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="brand-footer">
+        <strong>Backend:</strong> Node.js + SQLite + JWT Auth<br />
+        <strong>Main App:</strong> index.html + script.js + style.css
+      </div>
+    </section>
+
+    <section class="auth-panel">
+      <div class="auth-card">
+        <div class="top-badge">Secure Workspace Access</div>
+        <h2 class="auth-title">Login / Register</h2>
+        <p class="auth-subtitle">
+          Use your account to enter the ERP dashboard, or create a new workspace account.
+        </p>
+
+        <div id="messageBox" class="message"></div>
+
+        <div class="tab-buttons">
+          <button id="showLoginBtn" class="tab-btn active" type="button">Login</button>
+          <button id="showRegisterBtn" class="tab-btn" type="button">Register</button>
+        </div>
+
+        <!-- LOGIN -->
+        <div id="loginSection" class="form-section active">
+          <form id="loginForm" class="form-grid">
+            <div class="field">
+              <label for="loginEmail">Email</label>
+              <input type="email" id="loginEmail" placeholder="Enter your email" required />
+            </div>
+
+            <div class="field">
+              <label for="loginPassword">Password</label>
+              <input type="password" id="loginPassword" placeholder="Enter your password" required />
+            </div>
+
+            <button type="submit" class="btn btn-primary" id="loginSubmitBtn">
+              Login to ERP
+            </button>
+            <div style="margin-top:16px; text-align:center;">
+  <div id="googleSignInBtn" style="display:flex; justify-content:center;"></div>
+</div>
+          </form>
+
+          <p class="helper-text">
+            After successful login, you will be redirected to your main ERP dashboard.
+          </p>
+
+          <div class="bottom-link">
+            New user? <a href="#" id="goRegisterLink">Create account</a>
+          </div>
+        </div>
+
+        <!-- REGISTER -->
+        <div id="registerSection" class="form-section">
+          <form id="registerForm" class="form-grid">
+            <div class="row-2">
+              <div class="field">
+                <label for="registerFullName">Full Name</label>
+                <input type="text" id="registerFullName" placeholder="Your full name" required />
+              </div>
+
+              <div class="field">
+                <label for="registerWorkspaceName">Workspace Name</label>
+                <input type="text" id="registerWorkspaceName" placeholder="Your workspace name" required />
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="registerEmail">Email</label>
+              <input type="email" id="registerEmail" placeholder="Enter your email" required />
+            </div>
+
+            <div class="row-2">
+              <div class="field">
+                <label for="registerPassword">Password</label>
+                <input type="password" id="registerPassword" placeholder="Create password" required />
+              </div>
+
+              <div class="field">
+                <label for="registerConfirmPassword">Confirm Password</label>
+                <input type="password" id="registerConfirmPassword" placeholder="Confirm password" required />
+              </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary" id="registerSubmitBtn">
+              Create Workspace Account
+            </button>
+          </form>
+
+          <p class="helper-text">
+            Registration creates a user and workspace, then logs you in automatically.
+          </p>
+
+          <div class="bottom-link">
+            Already have an account? <a href="#" id="goLoginLink">Login</a>
+          </div>
+        </div>
+
+        <div class="mini-note">
+          <strong>Important:</strong> Make sure your backend server is running first,
+          otherwise login and register requests will fail.
+        </div>
+      </div>
+    </section>
+    <div style="margin-top:16px; text-align:center;">
+  <div id="googleSignInBtn" style="display:flex; justify-content:center;"></div>
+</div>
+  </div>
+
+  <script>
+    // =========================
+    // CONFIG
+    // =========================
+    const API_BASE = "http://localhost:4000/api";
+    const MAIN_APP_URL = "../index.html";
+
+    // =========================
+    // ELEMENTS
+    // =========================
+    const messageBox = document.getElementById("messageBox");
+
+    const showLoginBtn = document.getElementById("showLoginBtn");
+    const showRegisterBtn = document.getElementById("showRegisterBtn");
+
+    const loginSection = document.getElementById("loginSection");
+    const registerSection = document.getElementById("registerSection");
+
+    const goRegisterLink = document.getElementById("goRegisterLink");
+    const goLoginLink = document.getElementById("goLoginLink");
+
+    const loginForm = document.getElementById("loginForm");
+    const registerForm = document.getElementById("registerForm");
+
+    const loginSubmitBtn = document.getElementById("loginSubmitBtn");
+    const registerSubmitBtn = document.getElementById("registerSubmitBtn");
+
+    // =========================
+    // TAB SWITCHING
+    // =========================
+    function showLogin() {
+      loginSection.classList.add("active");
+      registerSection.classList.remove("active");
+
+      showLoginBtn.classList.add("active");
+      showRegisterBtn.classList.remove("active");
+
+      clearMessage();
+    }
+
+    function showRegister() {
+      registerSection.classList.add("active");
+      loginSection.classList.remove("active");
+
+      showRegisterBtn.classList.add("active");
+      showLoginBtn.classList.remove("active");
+
+      clearMessage();
+    }
+
+    showLoginBtn.addEventListener("click", showLogin);
+    showRegisterBtn.addEventListener("click", showRegister);
+    goRegisterLink.addEventListener("click", function (e) {
+      e.preventDefault();
+      showRegister();
+    });
+    goLoginLink.addEventListener("click", function (e) {
+      e.preventDefault();
+      showLogin();
+    });
+
+    // =========================
+    // MESSAGE HELPERS
+    // =========================
+    function showMessage(text, type = "info") {
+      messageBox.textContent = text;
+      messageBox.className = "message show " + type;
+    }
+
+    function clearMessage() {
+      messageBox.textContent = "";
+      messageBox.className = "message";
+    }
+
+    function setLoading(formElement, buttonElement, isLoading, loadingText, normalText) {
+      if (isLoading) {
+        formElement.classList.add("loading");
+        buttonElement.disabled = true;
+        buttonElement.textContent = loadingText;
+      } else {
+        formElement.classList.remove("loading");
+        buttonElement.disabled = false;
+        buttonElement.textContent = normalText;
+      }
+    }
+
+    // =========================
+    // API HELPER
+    // =========================
+    async function apiRequest(endpoint, options = {}) {
+      const response = await fetch(API_BASE + endpoint, {
+        method: options.method || "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.headers || {})
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error || data.message || "Request failed");
+      }
+
+      return data;
+    }
+
+    // =========================
+    // AUTH HELPERS
+    // =========================
+    function saveAuthData(token, workspaceId, email = "") {
+      localStorage.setItem("token", token);
+      localStorage.setItem("workspaceId", workspaceId);
+      localStorage.setItem("userEmail", email);
+    }
+
+    function redirectToMainApp() {
+      window.location.href = MAIN_APP_URL;
+    }
+
+   function checkIfAlreadyLoggedIn() {
+  // Disabled for now while testing auth flow
+}
+
+    // =========================
+    // LOGIN
+    // =========================
+    loginForm.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      clearMessage();
+
+      const email = document.getElementById("loginEmail").value.trim();
+      const password = document.getElementById("loginPassword").value;
+
+      if (!email || !password) {
+        showMessage("Please fill in email and password.", "error");
+        return;
+      }
+
+      try {
+        setLoading(loginForm, loginSubmitBtn, true, "Logging in...", "Login to ERP");
+
+        const data = await apiRequest("/auth/login", {
+          method: "POST",
+          body: { email, password }
+        });
+
+        let workspaceId = "";
+
+        if (data.workspaceId) {
+          workspaceId = data.workspaceId;
+        } else if (data.workspaces && data.workspaces.length > 0) {
+          workspaceId = data.workspaces[0].workspace_id || data.workspaces[0].id || "";
+        }
+
+        if (!data.token) {
+          throw new Error("Token not received from server.");
+        }
+
+        if (!workspaceId) {
+          throw new Error("Workspace ID not received from server.");
+        }
+
+        saveAuthData(data.token, workspaceId, email);
+
+        showMessage("Login successful. Redirecting to dashboard...", "success");
+
+        setTimeout(() => {
+          redirectToMainApp();
+        }, 1000);
+
+      } catch (error) {
+        showMessage(error.message || "Login failed.", "error");
+      } finally {
+        setLoading(loginForm, loginSubmitBtn, false, "Logging in...", "Login to ERP");
+      }
+    });
+
+    // =========================
+    // REGISTER
+    // =========================
+    registerForm.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      clearMessage();
+
+      const fullName = document.getElementById("registerFullName").value.trim();
+      const workspaceName = document.getElementById("registerWorkspaceName").value.trim();
+      const email = document.getElementById("registerEmail").value.trim();
+      const password = document.getElementById("registerPassword").value;
+      const confirmPassword = document.getElementById("registerConfirmPassword").value;
+
+      if (!fullName || !workspaceName || !email || !password || !confirmPassword) {
+        showMessage("Please fill in all register fields.", "error");
+        return;
+      }
+
+      if (password.length < 6) {
+        showMessage("Password must be at least 6 characters.", "error");
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        showMessage("Password and confirm password do not match.", "error");
+        return;
+      }
+
+      try {
+        setLoading(registerForm, registerSubmitBtn, true, "Creating account...", "Create Workspace Account");
+
+        const data = await apiRequest("/auth/register", {
+          method: "POST",
+          body: {
+            fullName,
+            email,
+            password,
+            workspaceName
+          }
+        });
+        
+        if (!data.token) {
+          throw new Error("Token not received from server.");
+        }
+
+        if (!data.workspaceId) {
+          throw new Error("Workspace ID not received from server.");
+        }
+
+        saveAuthData(data.token, data.workspaceId, email);
+
+        showMessage("Registration successful. Redirecting to dashboard...", "success");
+
+        setTimeout(() => {
+          redirectToMainApp();
+        }, 1000);
+
+      } catch (error) {
+        showMessage(error.message || "Registration failed.", "error");
+      } finally {
+        setLoading(registerForm, registerSubmitBtn, false, "Creating account...", "Create Workspace Account");
+      }
+    });
+
+const GOOGLE_CLIENT_ID = "338005460313-5n4u363712idvtvfsdgl2m654dtaa165.apps.googleusercontent.com";
+
+function handleGoogleCredentialResponse(response) {
+  googleLogin(response.credential);
+}
+
+async function googleLogin(credential) {
+  try {
+    showMessage("Signing in with Google...", "info");
+
+    const res = await fetch(API_BASE + "/auth/google", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ credential })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Google login failed");
+    }
+
+    localStorage.setItem("token", data.token);
+    localStorage.setItem("workspaceId", data.workspaceId);
+    localStorage.setItem("userEmail", data.user?.email || "");
+
+    showMessage("Google login successful. Redirecting...", "success");
+
+    setTimeout(() => {
+      window.location.href = "http://127.0.0.1:5500/index.html";
+    }, 900);
+  } catch (error) {
+    showMessage(error.message || "Google login failed", "error");
+  }
+}
+
+window.addEventListener("load", function () {
+  const googleBtn = document.getElementById("googleSignInBtn");
+  if (!googleBtn) return;
+  if (!window.google || !google.accounts || !google.accounts.id) return;
+
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: handleGoogleCredentialResponse
+  });
+
+  google.accounts.id.renderButton(googleBtn, {
+    theme: "outline",
+    size: "large",
+    text: "continue_with",
+    shape: "pill",
+    width: 320
+  });
+});
+    // =========================
+    // STARTUP
+    // =========================
+    checkIfAlreadyLoggedIn();
+  </script>
+</body>
+</html>

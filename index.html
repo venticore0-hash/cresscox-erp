@@ -1,0 +1,85 @@
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CresscoX ERP - Advanced Shop Business Software</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-top">
+            <div class="brand-logo" aria-label="CresscoX logo">
+  <img src="assets/CRESSCO.png" alt="CresscoX Logo" style="height: 100px; width: auto;">
+</div>
+          </div>
+          <p>
+            Editable business records, invoice management, total sales, profit
+            tracking, and a stronger red, white, and black brand identity.
+          </p>
+        </div>
+        <div class="side-section">
+          <h3>Navigation</h3>
+          <div class="nav" id="nav"></div>
+        </div>
+        <div class="side-section">
+          <h3>Tips</h3>
+          <p
+            style="
+              margin: 0;
+              color: rgba(255, 255, 255, 0.84);
+              line-height: 1.5;
+              font-size: 0.92rem;
+            "
+          >
+            Invoice item prices auto-fill from inventory, but you can now
+            overwrite them manually when needed.
+          </p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="topbar">
+          <div>
+            <h2 id="pageTitle">Dashboard</h2>
+            <p id="pageSubtitle">
+              Overview of customers, stock, purchasing, sales, and invoices.
+            </p>
+          </div>
+<button class="logout-top-btn" id="logoutBtn">Logout</button>
+
+          <div class="toolbar">
+            <label class="search">
+              <span>🔎</span>
+              <input
+                id="globalSearch"
+                placeholder="Search customers, items, purchases, invoices..."
+              />
+            </label>
+            <button class="btn" id="exportBtn">Export Data</button>
+            <label class="btn" for="importFile"
+              >Import Data<input
+                id="importFile"
+                type="file"
+                accept="application/json"
+                hidden
+            /></label>
+            <button class="btn warn" id="seedBtn">Load Demo</button>
+            <button class="btn danger" id="resetBtn">Clear All</button>
+          </div>
+        </div>
+        <section id="dashboard" class="section active"></section>
+        <section id="customers" class="section"></section>
+        <section id="inventory" class="section"></section>
+        <section id="purchasing" class="section"></section>
+        <section id="sales" class="section"></section>
+        <section id="invoice" class="section"></section>
+      </main>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
