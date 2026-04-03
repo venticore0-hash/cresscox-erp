@@ -60,37 +60,34 @@
     }
 
     .brand-panel {
-      padding: 42px;
+      padding: 26px 34px 38px;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
       min-height: 700px;
+      align-items: flex-start;
     }
 
     .logo-box {
       display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 26px;
-      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: flex-start;
+      margin: -30px 0 -100px -10px;
     }
 
-    .logo-main {
-      font-size: 2rem;
-      font-weight: 800;
-      letter-spacing: 1.5px;
-    }
-
-    .logo-mark {
-      color: var(--red);
-      font-size: 2rem;
-      font-weight: 900;
+    .logo-box img {
+      display: block;
+      max-width: 178px;
+      width: 100%;
+      height: auto;
+      object-fit: contain;
     }
 
     .brand-title {
       font-size: 2.5rem;
-      line-height: 1.1;
-      margin-bottom: 18px;
+      line-height: 1.08;
+      margin-bottom: 14px;
+      margin-top: -30px;
       font-weight: 800;
     }
 
@@ -424,8 +421,7 @@
     <section class="brand-panel">
       <div>
         <div class="logo-box">
-          <span class="logo-main">CRESSCOX</span>
-          <span class="logo-mark">X•</span>
+          <img src="assets/CRESSCO.png" alt="CresscoX Logo" />
         </div>
 
         <h1 class="brand-title">ERP Access Portal for your business system</h1>
@@ -451,8 +447,8 @@
       </div>
 
       <div class="brand-footer">
-        <strong>Backend:</strong> Node.js + SQLite + JWT Auth<br />
-        <strong>Main App:</strong> index.html + script.js + style.css
+        <strong>Designed for growing businesses</strong><br />
+        Manage customers, inventory, purchases, invoices, and sales in one secure ERP workspace.
       </div>
     </section>
 
@@ -548,8 +544,7 @@
         </div>
 
         <div class="mini-note">
-          <strong>Important:</strong> Make sure your backend server is running first,
-          otherwise login and register requests will fail.
+          <strong>Business-ready access:</strong> Sign in to manage daily operations, monitor sales performance, and keep your records organized in one place.
         </div>
       </div>
     </section>
@@ -562,8 +557,8 @@
     // =========================
     // CONFIG
     // =========================
-    const API_BASE = "http://localhost:4000/api";
-    const MAIN_APP_URL = "../index.html";
+    const API_BASE = "/api";
+    const MAIN_APP_URL = "./index.html";
 
     // =========================
     // ELEMENTS
@@ -832,12 +827,14 @@ async function googleLogin(credential) {
     showMessage("Google login successful. Redirecting...", "success");
 
     setTimeout(() => {
-      window.location.href = "http://127.0.0.1:5500/index.html";
-    }, 900);
+  window.location.href = MAIN_APP_URL;
+}, 900);
   } catch (error) {
     showMessage(error.message || "Google login failed", "error");
   }
 }
+
+
 
 window.addEventListener("load", function () {
   const googleBtn = document.getElementById("googleSignInBtn");

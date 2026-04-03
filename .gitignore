@@ -9,3 +9,4 @@ Backend/backups/
 *.sqlite-wal
 .DS_Store
 Thumbs.db
+backend/.env

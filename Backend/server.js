@@ -31,7 +31,13 @@ Important note:
 
 require('dotenv').config();
 const { OAuth2Client } = require('google-auth-library');
+
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+
+if (!GOOGLE_CLIENT_ID) {
+  throw new Error('GOOGLE_CLIENT_ID is missing in .env');
+}
+
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 
@@ -45,18 +51,31 @@ const Database = require('better-sqlite3');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:4000';
+const JWT_SECRET = process.env.JWT_SECRET;
 
-app.use(cors());
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET is missing in .env');
+}
+
+app.use(cors({
+  origin: FRONTEND_URL,
+  credentials: true
+}));
+
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static(path.join(__dirname, '..')));
-const JWT_SECRET = process.env.JWT_SECRET || 'replace-this-with-a-strong-secret';
+const FRONTEND_DIR = path.join(__dirname, '..');
+app.use(express.static(FRONTEND_DIR));
+
+app.get('/api/config', (req, res) => {
+  res.json({
+    googleClientId: GOOGLE_CLIENT_ID || ''
+  });
+});
+
 const DB_DIR = path.join(__dirname, 'data');
 const DB_PATH = path.join(DB_DIR, 'cresscox.sqlite');
 const BACKUP_DIR = path.join(__dirname, 'backups');
-
-if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
-if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
-
 
 const nodemailer = require('nodemailer');
 
@@ -64,14 +83,6 @@ const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
-
-console.log("GOOGLE_CLIENT_ID from env:", GOOGLE_CLIENT_ID);
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://127.0.0.1:5500';
-
-
-
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
 
 app.post('/api/auth/google', async (req, res) => {
   const { credential } = req.body;
@@ -1370,8 +1381,8 @@ app.get('/api/workspaces/:workspaceId/audit-logs', auth, requireWorkspaceAccess,
   res.json(rows);
 });
 
-app.get('/', (_req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'loginregister.html'));
+app.get('/', (req, res) => {
+  res.sendFile(path.join(FRONTEND_DIR, 'loginregister.html'));
 });
 
 app.listen(PORT, () => {
@@ -1393,7 +1404,7 @@ function randomToken() {
 }
 
 async function sendVerificationEmail(toEmail, fullName, verificationToken) {
-  const verifyUrl = `${FRONTEND_URL}/Login%20and%20Register/Loginregister.html?verify=${verificationToken}`;
+  const verifyUrl = `${FRONTEND_URL}/loginregister.html?verify=${verificationToken}`;
 
   await mailTransporter.sendMail({
     from: `"CresscoX ERP" <${process.env.EMAIL_USER}>`,

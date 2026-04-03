@@ -49,7 +49,27 @@
               Overview of customers, stock, purchasing, sales, and invoices.
             </p>
           </div>
-<button class="logout-top-btn" id="logoutBtn">Logout</button>
+<div class="topbar-account">
+            <button class="account-trigger" id="accountMenuBtn" type="button" aria-haspopup="true" aria-expanded="false">
+              <span class="account-avatar" id="accountAvatar">U</span>
+              <span class="account-meta">
+                <span class="account-name" id="accountName">User</span>
+                <span class="account-role" id="accountRole">Account</span>
+              </span>
+              <span class="account-caret">▾</span>
+            </button>
+
+            <div class="account-dropdown" id="accountDropdown" hidden>
+              <div class="account-dropdown-header">
+                <strong id="dropdownUserName">User</strong>
+                <span id="dropdownUserEmail">user@example.com</span>
+              </div>
+              <button class="account-menu-item" id="profileSettingsBtn" type="button">Profile &amp; Settings</button>
+              <button class="account-menu-item" id="workspaceInfoBtn" type="button">Workspace Info</button>
+              <button class="account-menu-item" id="helpSupportBtn" type="button">Help &amp; Support</button>
+              <button class="account-menu-item danger" id="logoutBtn" type="button">Logout</button>
+            </div>
+          </div>
 
           <div class="toolbar">
             <label class="search">
@@ -67,8 +87,7 @@
                 accept="application/json"
                 hidden
             /></label>
-            <button class="btn warn" id="seedBtn">Load Demo</button>
-            <button class="btn danger" id="resetBtn">Clear All</button>
+                        <button class="btn danger" id="resetBtn">Clear All</button>
           </div>
         </div>
         <section id="dashboard" class="section active"></section>
@@ -78,6 +97,74 @@
         <section id="sales" class="section"></section>
         <section id="invoice" class="section"></section>
       </main>
+    </div>
+
+
+    <div class="modal-backdrop" id="settingsModal" hidden>
+      <div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+        <div class="settings-modal-header">
+          <div>
+            <h3 id="settingsModalTitle">Account Settings</h3>
+            <p id="settingsModalSubtitle">Review your account information and access details.</p>
+          </div>
+          <button class="modal-close-btn" id="closeSettingsModalBtn" type="button" aria-label="Close settings">×</button>
+        </div>
+
+        <div id="profileSettingsSection" class="settings-section">
+  <div class="settings-grid">
+    <div class="settings-card">
+      <span class="settings-label">Full Name</span>
+      <strong id="settingsUserName">User</strong>
+    </div>
+    <div class="settings-card">
+      <span class="settings-label">Email Address</span>
+      <strong id="settingsUserEmail">user@example.com</strong>
+    </div>
+    <div class="settings-card">
+      <span class="settings-label">Workspace ID</span>
+      <strong id="settingsWorkspaceId">-</strong>
+    </div>
+    <div class="settings-card">
+      <span class="settings-label">Account Access</span>
+      <strong id="settingsAccountRole">Administrator</strong>
+    </div>
+  </div>
+</div>
+
+<div id="workspaceInfoSection" class="settings-section" hidden>
+  <div class="settings-grid">
+    <div class="settings-card">
+      <span class="settings-label">Workspace Name</span>
+      <strong id="workspaceName">ERP Workspace</strong>
+    </div>
+    <div class="settings-card">
+      <span class="settings-label">Active Customers</span>
+      <strong id="workspaceCustomers">0</strong>
+    </div>
+    <div class="settings-card">
+      <span class="settings-label">Inventory Items</span>
+      <strong id="workspaceInventory">0</strong>
+    </div>
+    <div class="settings-card">
+      <span class="settings-label">Purchase Records</span>
+      <strong id="workspacePurchases">0</strong>
+    </div>
+    <div class="settings-card">
+      <span class="settings-label">Invoices Created</span>
+      <strong id="workspaceInvoices">0</strong>
+    </div>
+    <div class="settings-card">
+      <span class="settings-label">Last Refreshed</span>
+      <strong id="workspaceLastSync">-</strong>
+    </div>
+  </div>
+</div>
+
+        <div class="settings-actions">
+          <button class="btn" id="settingsHelpBtn" type="button">Help &amp; Support</button>
+          <button class="btn danger" id="settingsLogoutBtn" type="button">Logout</button>
+        </div>
+      </div>
     </div>
 
     <script src="script.js"></script>

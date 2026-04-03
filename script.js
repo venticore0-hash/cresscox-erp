@@ -1,8 +1,8 @@
 (() => {
   "use strict";
-
-  const API = "http://localhost:4000/api";
-  const LOGIN_PAGE = "http://127.0.0.1:5500/loginregister.html";
+  
+  const API = "/api";
+  const LOGIN_PAGE = "./loginregister.html";
 
   const meta = {
     dashboard: [
@@ -48,6 +48,184 @@
     const workspaceId = getWorkspaceId() || "guest";
     return `cresscox-ui-${workspaceId}`;
   }
+
+  function getStoredUserEmail() {
+  return localStorage.getItem("userEmail") || "";
+}
+
+function getStoredUserName() {
+  const fullName =
+    localStorage.getItem("userFullName") ||
+    localStorage.getItem("fullName") ||
+    "";
+
+  if (fullName.trim()) return fullName.trim();
+
+  const email = getStoredUserEmail();
+  if (!email) return "My Account";
+
+  const localPart = email.split("@")[0] || "user";
+  return localPart
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getUserInitials(name) {
+  const parts = String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!parts.length) return "U";
+  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
+
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function generateWorkspaceCode() {
+  const userEmail = getStoredUserEmail() || "guest";
+  const base = `${userEmail}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  let hash = 0;
+  for (let i = 0; i < base.length; i++) {
+    hash = (hash * 31 + base.charCodeAt(i)) >>> 0;
+  }
+
+  const partA = Math.random().toString(36).slice(2, 6).toUpperCase();
+  const partB = (hash + Date.now()).toString(36).slice(-6).toUpperCase();
+  const partC = Math.random().toString(36).slice(2, 6).toUpperCase();
+
+  return `WS-${partA}-${partB}-${partC}`;
+}
+
+function getWorkspaceCodeStorageKey() {
+  const rawWorkspaceId = getWorkspaceId() || "guest";
+  const userEmail = getStoredUserEmail() || "guest";
+  return `workspace-code-${rawWorkspaceId}-${userEmail}`;
+}
+
+function getPersistentWorkspaceCode() {
+  const key = getWorkspaceCodeStorageKey();
+  let code = localStorage.getItem(key);
+
+  if (!code) {
+    code = generateWorkspaceCode();
+    localStorage.setItem(key, code);
+  }
+
+  return code;
+}
+
+function getWorkspaceLiveStats() {
+  return {
+    customers: Array.isArray(state?.customers) ? state.customers.length : 0,
+    inventoryItems: Array.isArray(state?.inventory) ? state.inventory.length : 0,
+    purchases: Array.isArray(state?.purchases) ? state.purchases.length : 0,
+    invoices: Array.isArray(state?.invoices) ? state.invoices.length : 0,
+    lastSync: new Date().toLocaleString(),
+    workspaceName: (state?.company?.name || "ERP Workspace").trim(),
+  };
+}
+
+function toggleAccountDropdown(forceState) {
+  const dropdown = document.getElementById("accountDropdown");
+  const trigger = document.getElementById("accountMenuBtn");
+  if (!dropdown || !trigger) return;
+
+  const nextOpen =
+    typeof forceState === "boolean" ? forceState : dropdown.hidden;
+
+  dropdown.hidden = !nextOpen;
+  trigger.setAttribute("aria-expanded", String(nextOpen));
+}
+
+function populateAccountUI() {
+  const userName = getStoredUserName();
+  const userEmail = getStoredUserEmail() || "No email available";
+  const workspaceId = getPersistentWorkspaceCode();
+
+  const accountName = document.getElementById("accountName");
+  const accountRole = document.getElementById("accountRole");
+  const accountAvatar = document.getElementById("accountAvatar");
+  const dropdownUserName = document.getElementById("dropdownUserName");
+  const dropdownUserEmail = document.getElementById("dropdownUserEmail");
+  const settingsUserName = document.getElementById("settingsUserName");
+  const settingsUserEmail = document.getElementById("settingsUserEmail");
+  const settingsWorkspaceId = document.getElementById("settingsWorkspaceId");
+  const settingsAccountRole = document.getElementById("settingsAccountRole");
+
+  if (accountName) accountName.textContent = userName;
+  if (accountRole) accountRole.textContent = "Administrator";
+  if (accountAvatar) accountAvatar.textContent = getUserInitials(userName);
+  if (dropdownUserName) dropdownUserName.textContent = userName;
+  if (dropdownUserEmail) dropdownUserEmail.textContent = userEmail;
+  if (settingsUserName) settingsUserName.textContent = userName;
+  if (settingsUserEmail) settingsUserEmail.textContent = userEmail;
+  if (settingsWorkspaceId) settingsWorkspaceId.textContent = workspaceId;
+  if (settingsAccountRole) settingsAccountRole.textContent = "Administrator";
+}
+
+function populateWorkspaceInfoUI() {
+  const stats = getWorkspaceLiveStats();
+
+  const workspaceName = document.getElementById("workspaceName");
+  const workspaceCustomers = document.getElementById("workspaceCustomers");
+  const workspaceInventory = document.getElementById("workspaceInventory");
+  const workspacePurchases = document.getElementById("workspacePurchases");
+  const workspaceInvoices = document.getElementById("workspaceInvoices");
+  const workspaceLastSync = document.getElementById("workspaceLastSync");
+
+  if (workspaceName) workspaceName.textContent = stats.workspaceName;
+  if (workspaceCustomers) workspaceCustomers.textContent = stats.customers;
+  if (workspaceInventory) workspaceInventory.textContent = stats.inventoryItems;
+  if (workspacePurchases) workspacePurchases.textContent = stats.purchases;
+  if (workspaceInvoices) workspaceInvoices.textContent = stats.invoices;
+  if (workspaceLastSync) workspaceLastSync.textContent = stats.lastSync;
+}
+
+function showSettingsSection(sectionName) {
+  const profileSection = document.getElementById("profileSettingsSection");
+  const workspaceSection = document.getElementById("workspaceInfoSection");
+  const modalTitle = document.getElementById("settingsModalTitle");
+  const modalSubtitle = document.getElementById("settingsModalSubtitle");
+
+  if (!profileSection || !workspaceSection || !modalTitle) return;
+
+  if (sectionName === "workspace") {
+    profileSection.hidden = true;
+    workspaceSection.hidden = false;
+    modalTitle.textContent = "Workspace Info";
+    if (modalSubtitle) {
+      modalSubtitle.textContent = "Live workspace statistics and operational summary.";
+    }
+    populateWorkspaceInfoUI();
+  } else {
+    profileSection.hidden = false;
+    workspaceSection.hidden = true;
+    modalTitle.textContent = "Profile & Settings";
+    if (modalSubtitle) {
+      modalSubtitle.textContent = "Review your account information and access details.";
+    }
+    populateAccountUI();
+  }
+}
+
+function openSettingsModal(section = "profile") {
+  const modal = document.getElementById("settingsModal");
+  if (!modal) return;
+
+  modal.hidden = false;
+  document.body.classList.add("modal-open");
+
+  showSettingsSection(section);
+}
+
+function closeSettingsModal() {
+  const modal = document.getElementById("settingsModal");
+  if (!modal) return;
+  modal.hidden = true;
+  document.body.classList.remove("modal-open");
+}
 
   function logout() {
     const ok = confirm("Are you sure you want to logout?");
@@ -2456,22 +2634,70 @@
     });
 
     document.getElementById("exportBtn")?.addEventListener("click", exportData);
-    document.getElementById("seedBtn")?.addEventListener("click", loadDemo);
     document.getElementById("resetBtn")?.addEventListener("click", clearAll);
-    document.getElementById("logoutBtn")?.addEventListener("click", logout);
+document.getElementById("logoutBtn")?.addEventListener("click", logout);
 
-    document.getElementById("importFile")?.addEventListener("change", (event) => {
-      importData(event.target.files?.[0]);
-      event.target.value = "";
-    });
+document.getElementById("importFile")?.addEventListener("change", (event) => {
+  importData(event.target.files?.[0]);
+  event.target.value = "";
+});
 
-    topEventsBound = true;
+document.getElementById("accountMenuBtn")?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const dropdown = document.getElementById("accountDropdown");
+  toggleAccountDropdown(dropdown?.hidden);
+});
+
+document.getElementById("profileSettingsBtn")?.addEventListener("click", () => {
+  toggleAccountDropdown(false);
+  openSettingsModal("profile");
+});
+
+document.getElementById("workspaceInfoBtn")?.addEventListener("click", () => {
+  toggleAccountDropdown(false);
+  openSettingsModal("workspace");
+});
+
+document.getElementById("helpSupportBtn")?.addEventListener("click", () => {
+  toggleAccountDropdown(false);
+  alert("For help and support, contact your ERP administrator or support team.");
+});
+
+document.getElementById("settingsHelpBtn")?.addEventListener("click", () => {
+  alert("For help and support, contact your ERP administrator or support team.");
+});
+
+document.getElementById("settingsLogoutBtn")?.addEventListener("click", logout);
+
+document.getElementById("closeSettingsModalBtn")?.addEventListener("click", closeSettingsModal);
+
+document.getElementById("settingsModal")?.addEventListener("click", (event) => {
+  if (event.target?.id === "settingsModal") closeSettingsModal();
+});
+
+document.addEventListener("click", (event) => {
+  const accountArea = document.querySelector(".topbar-account");
+  if (accountArea && !accountArea.contains(event.target)) {
+    toggleAccountDropdown(false);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    toggleAccountDropdown(false);
+    closeSettingsModal();
+  }
+});
+
+topEventsBound = true;
   }
 
-  function renderAll() {
-    if (!state) return;
+ function renderAll() {
+  if (!state) return;
 
-    renderNav();
+  populateAccountUI();
+  renderNav();
+
     setHeader();
     renderDashboard();
     renderCustomers();
