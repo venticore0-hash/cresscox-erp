@@ -1,11 +1,11 @@
 {
   "name": "erp-system",
   "version": "1.0.0",
-  "main": "backend/server.js",
-  "scripts": {
-    "start": "node backend/server.js",
-    "dev": "node backend/server.js"
-  },
+  "main": "Backend/server.js",
+"scripts": {
+  "start": "node Backend/server.js",
+  "dev": "node Backend/server.js"
+},
   "dependencies": {
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
