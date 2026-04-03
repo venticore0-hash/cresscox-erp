@@ -77,6 +77,14 @@ const DB_DIR = path.join(__dirname, 'data');
 const DB_PATH = path.join(DB_DIR, 'cresscox.sqlite');
 const BACKUP_DIR = path.join(__dirname, 'backups');
 
+if (!fs.existsSync(DB_DIR)) {
+  fs.mkdirSync(DB_DIR, { recursive: true });
+}
+
+if (!fs.existsSync(BACKUP_DIR)) {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+}
+
 const nodemailer = require('nodemailer');
 
 const db = new Database(DB_PATH);
