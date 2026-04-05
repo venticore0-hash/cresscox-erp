@@ -21,7 +21,7 @@ const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : nul
 const transporter = nodemailer.createTransport({ jsonTransport: true });
 
 const ROOT_DIR = __dirname;
-const FRONTEND_DIR = ROOT_DIR;
+const FRONTEND_DIR = path.join(ROOT_DIR, '..');
 const DATA_DIR = path.join(ROOT_DIR, 'data');
 const DB_PATH = path.join(DATA_DIR, 'cresscox.sqlite');
 const BACKUP_DIR = path.join(ROOT_DIR, 'backups');
