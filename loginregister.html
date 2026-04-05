@@ -558,7 +558,8 @@
     // CONFIG
     // =========================
     const API_BASE = "/api";
-    const MAIN_APP_URL = "./index.html";
+    const MAIN_APP_URL = "/app";
+    let GOOGLE_CLIENT_ID = "";
 
     // =========================
     // ELEMENTS
@@ -664,10 +665,11 @@
     // =========================
     // AUTH HELPERS
     // =========================
-    function saveAuthData(token, workspaceId, email = "") {
+    function saveAuthData(token, workspaceId, email = "", fullName = "") {
       localStorage.setItem("token", token);
       localStorage.setItem("workspaceId", workspaceId);
       localStorage.setItem("userEmail", email);
+      if (fullName) localStorage.setItem("userFullName", fullName);
     }
 
     function redirectToMainApp() {
@@ -675,7 +677,12 @@
     }
 
    function checkIfAlreadyLoggedIn() {
-  // Disabled for now while testing auth flow
+  const token = localStorage.getItem("token");
+  const workspaceId = localStorage.getItem("workspaceId");
+
+  if (token && workspaceId) {
+    window.location.replace(MAIN_APP_URL);
+  }
 }
 
     // =========================
@@ -717,7 +724,7 @@
           throw new Error("Workspace ID not received from server.");
         }
 
-        saveAuthData(data.token, workspaceId, email);
+        saveAuthData(data.token, workspaceId, email, data.user?.fullName || "");
 
         showMessage("Login successful. Redirecting to dashboard...", "success");
 
@@ -781,7 +788,7 @@
           throw new Error("Workspace ID not received from server.");
         }
 
-        saveAuthData(data.token, data.workspaceId, email);
+        saveAuthData(data.token, data.workspaceId, email, fullName);
 
         showMessage("Registration successful. Redirecting to dashboard...", "success");
 
@@ -795,8 +802,6 @@
         setLoading(registerForm, registerSubmitBtn, false, "Creating account...", "Create Workspace Account");
       }
     });
-
-const GOOGLE_CLIENT_ID = "338005460313-5n4u363712idvtvfsdgl2m654dtaa165.apps.googleusercontent.com";
 
 function handleGoogleCredentialResponse(response) {
   googleLogin(response.credential);
@@ -823,6 +828,7 @@ async function googleLogin(credential) {
     localStorage.setItem("token", data.token);
     localStorage.setItem("workspaceId", data.workspaceId);
     localStorage.setItem("userEmail", data.user?.email || "");
+    localStorage.setItem("userFullName", data.user?.fullName || "");
 
     showMessage("Google login successful. Redirecting...", "success");
 
@@ -836,11 +842,21 @@ async function googleLogin(credential) {
 
 
 
-window.addEventListener("load", function () {
+async function initGoogleLogin() {
   const googleBtn = document.getElementById("googleSignInBtn");
   if (!googleBtn) return;
-  if (!window.google || !google.accounts || !google.accounts.id) return;
 
+  try {
+    const config = await apiRequest("/config");
+    GOOGLE_CLIENT_ID = config.googleClientId || "";
+  } catch (_error) {
+    GOOGLE_CLIENT_ID = "";
+  }
+
+if (!GOOGLE_CLIENT_ID || !window.google || !window.google.accounts || !window.google.accounts.id) {
+  googleBtn.innerHTML = '<div class="mini-note">Google sign-in is not configured yet on this server.</div>';
+  return;
+}
   google.accounts.id.initialize({
     client_id: GOOGLE_CLIENT_ID,
     callback: handleGoogleCredentialResponse
@@ -853,7 +869,9 @@ window.addEventListener("load", function () {
     shape: "pill",
     width: 320
   });
-});
+}
+
+window.addEventListener("load", initGoogleLogin);
     // =========================
     // STARTUP
     // =========================

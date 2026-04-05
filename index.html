@@ -1,11 +1,10 @@
-
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CresscoX ERP - Advanced Shop Business Software</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <div class="app">
@@ -13,160 +12,301 @@
         <div class="brand">
           <div class="brand-top">
             <div class="brand-logo" aria-label="CresscoX logo">
-  <img src="assets/CRESSCO.png" alt="CresscoX Logo" style="height: 100px; width: auto;">
-</div>
+              <img src="assets/CRESSCO.png" alt="CresscoX Logo" class="brand-logo-img" />
+            </div>
           </div>
           <p>
-            Editable business records, invoice management, total sales, profit
-            tracking, and a stronger red, white, and black brand identity.
+            Editable business records, invoice management, customers, inventory, purchasing, reports, and a cleaner day-to-day ERP account system.
           </p>
         </div>
-        <div class="side-section">
-          <h3>Navigation</h3>
-          <div class="nav" id="nav"></div>
-        </div>
-        <div class="side-section">
-          <h3>Tips</h3>
-          <p
-            style="
-              margin: 0;
-              color: rgba(255, 255, 255, 0.84);
-              line-height: 1.5;
-              font-size: 0.92rem;
-            "
-          >
-            Invoice item prices auto-fill from inventory, but you can now
-            overwrite them manually when needed.
+
+       
+
+        <div class="side-section tip-card">
+          <div class="side-section-head">
+            <h3>Tips</h3>
+            <span class="side-hint">Workflow</span>
+          </div>
+          <p class="side-note">
+            Invoice item prices can auto-fill from inventory, but stay editable.
+            Keep forms collapsed by default for a cleaner daily workflow.
           </p>
+        </div>
+
+        <div class="side-section support-card">
+          <div class="side-section-head">
+            <h3>Support</h3>
+            <span class="side-hint">CresscoX</span>
+          </div>
+          <p class="side-note">
+            Need help with setup, branding, imports, or B2B expansion?
+          </p>
+          <a class="support-link" href="https://cresscox.com" target="_blank" rel="noreferrer">
+            Open CresscoX Website ↗
+          </a>
         </div>
       </aside>
 
       <main class="main">
-        <div class="topbar">
-          <div>
-            <h2 id="pageTitle">Dashboard</h2>
-            <p id="pageSubtitle">
-              Overview of customers, stock, purchasing, sales, and invoices.
-            </p>
-          </div>
-<div class="topbar-account">
-            <button class="account-trigger" id="accountMenuBtn" type="button" aria-haspopup="true" aria-expanded="false">
-              <span class="account-avatar" id="accountAvatar">U</span>
-              <span class="account-meta">
-                <span class="account-name" id="accountName">User</span>
-                <span class="account-role" id="accountRole">Account</span>
-              </span>
-              <span class="account-caret">▾</span>
-            </button>
+        <div class="topbar-shell">
+          <div class="topbar">
+  <div class="topbar-left topbar-branding">
+    <div class="topbar-logo" aria-label="CresscoX logo">
+      <img src="assets/CRESSCO.png" alt="CresscoX Logo" class="topbar-logo-img" />
+    </div>
 
-            <div class="account-dropdown" id="accountDropdown" hidden>
-              <div class="account-dropdown-header">
-                <strong id="dropdownUserName">User</strong>
-                <span id="dropdownUserEmail">user@example.com</span>
-              </div>
-              <button class="account-menu-item" id="profileSettingsBtn" type="button">Profile &amp; Settings</button>
-              <button class="account-menu-item" id="workspaceInfoBtn" type="button">Workspace Info</button>
-              <button class="account-menu-item" id="helpSupportBtn" type="button">Help &amp; Support</button>
-              <button class="account-menu-item danger" id="logoutBtn" type="button">Logout</button>
-            </div>
-          </div>
+    <div class="topbar-copy">
+      <div class="page-kicker">Business Dashboard</div>
+      <h2 id="pageTitle">Dashboard</h2>
+      <p id="pageSubtitle">
+        Overview of total sales, total expenses, total profit, invoices, purchasing, and account operations.
+      </p>
+    </div>
+  </div>
 
-          <div class="toolbar">
-            <label class="search">
-              <span>🔎</span>
-              <input
-                id="globalSearch"
-                placeholder="Search customers, items, purchases, invoices..."
-              />
-            </label>
-            <button class="btn" id="exportBtn">Export Data</button>
-            <label class="btn" for="importFile"
-              >Import Data<input
-                id="importFile"
-                type="file"
-                accept="application/json"
-                hidden
-            /></label>
-                        <button class="btn danger" id="resetBtn">Clear All</button>
-          </div>
+  <div class="topbar-account">
+    <button
+      class="account-trigger"
+      id="accountMenuBtn"
+      type="button"
+      aria-haspopup="true"
+      aria-expanded="false"
+    >
+      <span class="account-avatar" id="accountAvatar">U</span>
+      <span class="account-meta">
+        <span class="account-name" id="accountName">User</span>
+        <span class="account-role" id="accountRole">Account</span>
+      </span>
+      <span class="account-caret">▾</span>
+    </button>
+
+    <div class="account-dropdown" id="accountDropdown" hidden>
+      <div class="account-dropdown-header">
+        <strong id="dropdownUserName">User</strong>
+        <span id="dropdownUserEmail">user@example.com</span>
+      </div>
+      <button class="account-menu-item" id="profileSettingsBtn" type="button">
+        Profile
+      </button>
+      <button class="account-menu-item" id="workspaceInfoBtn" type="button">
+        Settings
+      </button>
+      <button class="account-menu-item" id="helpSupportBtn" type="button">
+        Help &amp; Support
+      </button>
+      <button class="account-menu-item danger" id="logoutBtn" type="button">
+        Logout
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="topnav-wrap">
+  <div class="nav topnav" id="nav"></div>
+</div>
+
+<div class="toolbar toolbar-primary">
+  <label class="search">
+    <span>🔎</span>
+    <input
+      id="globalSearch"
+      placeholder="Search customers, items, purchases, invoices, expenses..."
+    />
+  </label>
+
+  <div class="toolbar-actions">
+    <button class="btn" id="exportBtn" type="button">Export Data</button>
+    <label class="btn" for="importFile"
+      >Import Data
+      <input
+        id="importFile"
+        type="file"
+        accept="application/json"
+        hidden
+    /></label>
+    <button class="btn danger" id="resetBtn" type="button">Clear All</button>
+  </div>
+</div>
         </div>
-        <section id="dashboard" class="section active"></section>
+
+<section id="dashboard" class="section active"></section>
         <section id="customers" class="section"></section>
         <section id="inventory" class="section"></section>
         <section id="purchasing" class="section"></section>
         <section id="sales" class="section"></section>
         <section id="invoice" class="section"></section>
+        <section id="expenses" class="section"></section>
+        <section id="cases" class="section"></section>
+        <section id="opportunities" class="section"></section>
+        <section id="tasks" class="section"></section>
+        <section id="returns" class="section"></section>
+        <section id="emails" class="section"></section>
+        <section id="barcode" class="section"></section>
       </main>
     </div>
-
 
     <div class="modal-backdrop" id="settingsModal" hidden>
       <div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
         <div class="settings-modal-header">
           <div>
-            <h3 id="settingsModalTitle">Account Settings</h3>
-            <p id="settingsModalSubtitle">Review your account information and access details.</p>
+            <span class="settings-kicker">Account Controls</span>
+            <h3 id="settingsModalTitle">Profile</h3>
+            <p id="settingsModalSubtitle">Review your profile information and account details.</p>
+          </div>
+          <div class="settings-header-actions">
+            <button class="btn primary" id="saveSettingsBtnTop" type="button">Save</button>
+            <button class="btn" id="defaultSettingsBtnTop" type="button">Defaults</button>
           </div>
           <button class="modal-close-btn" id="closeSettingsModalBtn" type="button" aria-label="Close settings">×</button>
         </div>
 
         <div id="profileSettingsSection" class="settings-section">
-  <div class="settings-grid">
-    <div class="settings-card">
-      <span class="settings-label">Full Name</span>
-      <strong id="settingsUserName">User</strong>
-    </div>
-    <div class="settings-card">
-      <span class="settings-label">Email Address</span>
-      <strong id="settingsUserEmail">user@example.com</strong>
-    </div>
-    <div class="settings-card">
-      <span class="settings-label">Workspace ID</span>
-      <strong id="settingsWorkspaceId">-</strong>
-    </div>
-    <div class="settings-card">
-      <span class="settings-label">Account Access</span>
-      <strong id="settingsAccountRole">Administrator</strong>
-    </div>
-  </div>
-</div>
+          <div class="settings-stack">
+            <div class="settings-panel">
+              <div class="settings-panel-head">
+                <div>
+                  <h4>Profile Overview</h4>
+                  <p>Profile information and account details are shown here separately from settings.</p>
+                </div>
+                <span class="pill green">Active</span>
+              </div>
 
-<div id="workspaceInfoSection" class="settings-section" hidden>
-  <div class="settings-grid">
-    <div class="settings-card">
-      <span class="settings-label">Workspace Name</span>
-      <strong id="workspaceName">ERP Workspace</strong>
-    </div>
-    <div class="settings-card">
-      <span class="settings-label">Active Customers</span>
-      <strong id="workspaceCustomers">0</strong>
-    </div>
-    <div class="settings-card">
-      <span class="settings-label">Inventory Items</span>
-      <strong id="workspaceInventory">0</strong>
-    </div>
-    <div class="settings-card">
-      <span class="settings-label">Purchase Records</span>
-      <strong id="workspacePurchases">0</strong>
-    </div>
-    <div class="settings-card">
-      <span class="settings-label">Invoices Created</span>
-      <strong id="workspaceInvoices">0</strong>
-    </div>
-    <div class="settings-card">
-      <span class="settings-label">Last Refreshed</span>
-      <strong id="workspaceLastSync">-</strong>
-    </div>
-  </div>
-</div>
+              <div class="settings-grid">
+                <div class="settings-card">
+                  <span class="settings-label">Full Name</span>
+                  <strong id="settingsUserName">User</strong>
+                </div>
+                <div class="settings-card">
+                  <span class="settings-label">Email Address</span>
+                  <strong id="settingsUserEmail">user@example.com</strong>
+                </div>
+                <div class="settings-card">
+                  <span class="settings-label">Account ID</span>
+                  <strong id="settingsWorkspaceId">0000000000</strong>
+                </div>
+                <div class="settings-card">
+                  <span class="settings-label">Account Access</span>
+                  <strong id="settingsAccountRole">Administrator</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="workspaceInfoSection" class="settings-section" hidden>
+          <div class="settings-stack">
+            <div class="settings-panel">
+              <div class="settings-panel-head">
+                <div>
+                  <h4>Settings</h4>
+                  <p>Settings are separated from profile details and focus only on system preferences.</p>
+                </div>
+                <span class="pill green">Live Settings</span>
+              </div>
+
+              <div class="settings-option-grid">
+                <label class="check-tile">
+                  <input id="prefCollapseForms" type="checkbox" />
+                  <span>
+                    <strong>Collapse forms by default</strong>
+                    <small>Customers, Inventory, and Purchasing open only when needed.</small>
+                  </span>
+                </label>
+                <label class="check-tile">
+                  <input id="prefShowDashboardActivity" type="checkbox" />
+                  <span>
+                    <strong>Show dashboard latest activity</strong>
+                    <small>Keep only operational activity information visible on the dashboard.</small>
+                  </span>
+                </label>
+                <label class="check-tile">
+                  <input id="prefEnableB2B" type="checkbox" />
+                  <span>
+                    <strong>Enable B2B mode</strong>
+                    <small>Show B2B-oriented tabs like cases, opportunities, and emails.</small>
+                  </span>
+                </label>
+                <label class="check-tile">
+                  <input id="prefEnableBarcode" type="checkbox" />
+                  <span>
+                    <strong>Enable barcode workflow</strong>
+                    <small>Prepare scan setup and barcode-linked inventory items.</small>
+                  </span>
+                </label>
+              </div>
+
+              <div class="settings-form-grid" style="margin-top:16px;">
+                <div class="field">
+                  <label for="settingsBusinessName">Business Name</label>
+                  <input id="settingsBusinessName" type="text" placeholder="Enter business name" />
+                </div>
+                <div class="field">
+                  <label for="settingsBusinessLogo">Business Logo</label>
+                  <input id="settingsBusinessLogo" type="file" accept="image/*" />
+                </div>
+                <div class="field span-2">
+                  <label for="settingsBusinessTagline">Invoice Footer / Tagline</label>
+                  <input id="settingsBusinessTagline" type="text" placeholder="Optional invoice footer or business tagline" />
+                </div>
+              </div>
+
+              <div class="settings-panel-head" style="margin-top:18px;">
+                <div>
+                  <h4>Dashboard Summary Widgets</h4>
+                  <p>Dashboard should only keep Total Sales, Total Expenses, and Total Profit after script updates.</p>
+                </div>
+              </div>
+              <div class="settings-option-grid" id="summarySettingsGrid"></div>
+
+              <div class="settings-panel-head" style="margin-top:18px;">
+                <div>
+                  <h4>Customized Navigation</h4>
+                  <p>Select which navigation tabs should stay visible in the top navigation bar.</p>
+                </div>
+              </div>
+              <div class="settings-option-grid" id="navigationSettingsGrid"></div>
+
+              <div class="settings-panel-head" style="margin-top:18px;">
+                <div>
+                  <h4>Purchasing and Expenses Link</h4>
+                  <p>Planned rule: each purchasing amount should auto-create a purchasing expense entry with Date, Amount, and a fixed detail template.</p>
+                </div>
+              </div>
+              <div class="expansion-grid">
+                <div class="mini-card"><strong>Date</strong><span>Use the actual purchasing date automatically.</span></div>
+                <div class="mini-card"><strong>Amount</strong><span>Use the same amount as the purchase automatically.</span></div>
+                <div class="mini-card"><strong>Detail</strong><span>On [purchasing date], Items were purchased for amount [that amount].</span></div>
+                <div class="mini-card"><strong>Category</strong><span>Always save this entry under purchasing expenses.</span></div>
+              </div>
+
+              <div class="settings-panel-head" style="margin-top:18px;">
+                <div>
+                  <h4>Charts</h4>
+                  <p>Charts have been removed from the HTML layout and should stay removed in later script updates as well.</p>
+                </div>
+              </div>
+
+              <div class="settings-panel-head" style="margin-top:18px;">
+                <div>
+                  <h4>Latest Activity Sources</h4>
+                  <p>Select which modules should feed the dashboard activity area.</p>
+                </div>
+              </div>
+              <div class="settings-option-grid" id="activitySettingsGrid"></div>
+            </div>
+          </div>
+        </div>
 
         <div class="settings-actions">
+          <button class="btn primary" id="saveSettingsBtn" type="button">Save Changes</button>
+          <button class="btn" id="defaultSettingsBtn" type="button">Restore Defaults</button>
           <button class="btn" id="settingsHelpBtn" type="button">Help &amp; Support</button>
+          <a class="btn" href="https://cresscox.com" target="_blank" rel="noreferrer">CresscoX Website</a>
           <button class="btn danger" id="settingsLogoutBtn" type="button">Logout</button>
         </div>
       </div>
     </div>
 
-    <script src="script.js"></script>
+    <script src="script.js?v=20260404b"></script>
   </body>
 </html>

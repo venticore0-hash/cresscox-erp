@@ -1,45 +1,4 @@
-/*
-CresscoX ERP - Node.js backend starter
-
-What this solves from your 6 problems:
-1. No Device Syncing -> shared server + database
-2. Data Deletion Risk -> data stored on server, not browser localStorage
-3. No Real-time Collaboration -> multiple users can log into same workspace/company
-4. Storage Limits -> SQLite database on server instead of browser storage
-5. Zero Data Privacy -> login, hashed passwords, protected API routes
-6. No Automatic Backups -> backup endpoints + restore endpoint + audit log
-
-How to use:
-1. Create a new folder called backend
-2. Save this file as: server.js
-3. Run:
-   npm init -y
-   npm install express cors bcryptjs jsonwebtoken better-sqlite3 multer
-4. Start:
-   node server.js
-
-Frontend connection:
-- Your current HTML index file can call this backend with fetch().
-- Default server URL in this file: http://localhost:4000
-
-Important note:
-- This is the Node.js part only.
-- After this, your frontend HTML must be changed to save/load data from these APIs.
-- For live use, you will later deploy this backend to a server.
-*/
-
-
 require('dotenv').config();
-const { OAuth2Client } = require('google-auth-library');
-
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-
-if (!GOOGLE_CLIENT_ID) {
-  throw new Error('GOOGLE_CLIENT_ID is missing in .env');
-}
-
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
-
 
 const express = require('express');
 const cors = require('cors');
@@ -48,291 +7,243 @@ const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const nodemailer = require('nodemailer');
+const { OAuth2Client } = require('google-auth-library');
+const crypto = require('crypto');
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = Number(process.env.PORT || 4000);
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:4000';
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || 'change-this-in-production';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET is missing in .env');
-}
+const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
+const transporter = nodemailer.createTransport({ jsonTransport: true });
 
-app.use(cors({
-  origin: FRONTEND_URL,
-  credentials: true
-}));
+const ROOT_DIR = __dirname;
+const FRONTEND_DIR = ROOT_DIR;
+const DATA_DIR = path.join(ROOT_DIR, 'data');
+const DB_PATH = path.join(DATA_DIR, 'cresscox.sqlite');
+const BACKUP_DIR = path.join(ROOT_DIR, 'backups');
 
-app.use(express.json({ limit: '10mb' }));
-const FRONTEND_DIR = path.join(__dirname, '..');
-app.use(express.static(FRONTEND_DIR));
-
-app.get('/api/config', (req, res) => {
-  res.json({
-    googleClientId: GOOGLE_CLIENT_ID || ''
-  });
-});
-
-const DB_DIR = path.join(__dirname, 'data');
-const DB_PATH = path.join(DB_DIR, 'cresscox.sqlite');
-const BACKUP_DIR = path.join(__dirname, 'backups');
-
-if (!fs.existsSync(DB_DIR)) {
-  fs.mkdirSync(DB_DIR, { recursive: true });
-}
-
-if (!fs.existsSync(BACKUP_DIR)) {
-  fs.mkdirSync(BACKUP_DIR, { recursive: true });
-}
-
-const nodemailer = require('nodemailer');
+fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+app.use(cors({ origin: FRONTEND_URL, credentials: true }));
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+app.use(express.static(FRONTEND_DIR));
 
-app.post('/api/auth/google', async (req, res) => {
-  const { credential } = req.body;
-
-  if (!credential) {
-    return res.status(400).json({ error: 'Google credential is required' });
-  }
-
-  try {
-    const ticket = await googleClient.verifyIdToken({
-      idToken: credential,
-      audience: GOOGLE_CLIENT_ID,
-    });
-
-    const payload = ticket.getPayload();
-
-    const googleId = payload.sub;
-    const email = (payload.email || '').trim().toLowerCase();
-    const fullName = (payload.name || 'Google User').trim();
-    const emailVerified = !!payload.email_verified;
-
-    if (!email) {
-      return res.status(400).json({ error: 'Google account email not found' });
-    }
-
-    if (!emailVerified) {
-      return res.status(400).json({ error: 'Google email is not verified' });
-    }
-
-    let user = db.prepare(`
-      SELECT * FROM users
-      WHERE email = ?
-    `).get(email);
-
-    let workspaceId = null;
-
-    if (!user) {
-      const tx = db.transaction(() => {
-        const userResult = db.prepare(`
-          INSERT INTO users (
-            full_name,
-            email,
-            password_hash,
-            role,
-            google_id,
-            is_verified,
-            verification_token
-          )
-          VALUES (?, ?, ?, 'admin', ?, 1, NULL)
-        `).run(fullName, email, '', googleId);
-
-        const userId = userResult.lastInsertRowid;
-
-        const workspaceResult = db.prepare(`
-          INSERT INTO workspaces (name, owner_user_id)
-          VALUES (?, ?)
-        `).run(`${fullName}'s Workspace`, userId);
-
-        workspaceId = workspaceResult.lastInsertRowid;
-
-        db.prepare(`
-          INSERT INTO workspace_members (workspace_id, user_id, member_role)
-          VALUES (?, ?, 'admin')
-        `).run(workspaceId, userId);
-      });
-
-      tx();
-
-      user = db.prepare(`
-        SELECT * FROM users
-        WHERE email = ?
-      `).get(email);
-    } else {
-      db.prepare(`
-        UPDATE users
-        SET google_id = ?, is_verified = 1
-        WHERE id = ?
-      `).run(googleId, user.id);
-
-      const membership = db.prepare(`
-        SELECT workspace_id
-        FROM workspace_members
-        WHERE user_id = ?
-        LIMIT 1
-      `).get(user.id);
-
-      workspaceId = membership ? membership.workspace_id : null;
-    }
-
-    if (!workspaceId) {
-      const membership = db.prepare(`
-        SELECT workspace_id
-        FROM workspace_members
-        WHERE user_id = ?
-        LIMIT 1
-      `).get(user.id);
-
-      workspaceId = membership ? membership.workspace_id : null;
-    }
-
-    const token = generateToken(user);
-
-    return res.json({
-      message: 'Google login successful',
-      token,
-      workspaceId,
-      user: {
-        email,
-        fullName,
-      },
-    });
-  } catch (error) {
-    console.error('Google auth error:', error);
-    return res.status(401).json({ error: 'Invalid Google credential' });
-  }
-});
-
-function initDb() {
-  db.exec(`
-   CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  full_name TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'admin',
-  google_id TEXT,
-  is_verified INTEGER NOT NULL DEFAULT 0,
-  verification_token TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-    
-    CREATE TABLE IF NOT EXISTS workspaces (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      owner_user_id INTEGER NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (owner_user_id) REFERENCES users(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS workspace_members (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      workspace_id INTEGER NOT NULL,
-      user_id INTEGER NOT NULL,
-      member_role TEXT NOT NULL DEFAULT 'admin',
-      UNIQUE(workspace_id, user_id),
-      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS customers (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      workspace_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      phone TEXT,
-      email TEXT,
-      address TEXT,
-      notes TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS inventory_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      workspace_id INTEGER NOT NULL,
-      item_code TEXT NOT NULL,
-      item_name TEXT NOT NULL,
-      current_stock REAL NOT NULL DEFAULT 0,
-      minimum_qty REAL NOT NULL DEFAULT 0,
-      sale_price REAL NOT NULL DEFAULT 0,
-      cost_price REAL NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(workspace_id, item_code),
-      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS purchases (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      workspace_id INTEGER NOT NULL,
-      purchase_date TEXT NOT NULL,
-      supplier TEXT,
-      item_code TEXT NOT NULL,
-      item_name TEXT NOT NULL,
-      quantity REAL NOT NULL,
-      cost_price REAL NOT NULL DEFAULT 0,
-      note TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS invoices (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      workspace_id INTEGER NOT NULL,
-      invoice_no TEXT NOT NULL,
-      invoice_date TEXT NOT NULL,
-      customer_name TEXT,
-      customer_phone TEXT,
-      customer_address TEXT,
-      total REAL NOT NULL DEFAULT 0,
-      profit REAL NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(workspace_id, invoice_no),
-      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS invoice_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      invoice_id INTEGER NOT NULL,
-      item_code TEXT NOT NULL,
-      item_name TEXT NOT NULL,
-      quantity REAL NOT NULL,
-      price REAL NOT NULL,
-      cost_price REAL NOT NULL DEFAULT 0,
-      line_total REAL NOT NULL DEFAULT 0,
-      line_profit REAL NOT NULL DEFAULT 0,
-      FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS audit_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      workspace_id INTEGER,
-      user_id INTEGER,
-      action TEXT NOT NULL,
-      entity_type TEXT NOT NULL,
-      entity_id TEXT,
-      details_json TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+function nowIso() {
+  return new Date().toISOString();
 }
 
-initDb();
+function normalizeText(value, fallback = '') {
+  return String(value ?? fallback).trim();
+}
 
-function logAudit({ workspaceId = null, userId = null, action, entityType, entityId = null, details = null }) {
-  const stmt = db.prepare(`
-    INSERT INTO audit_logs (workspace_id, user_id, action, entity_type, entity_id, details_json)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  stmt.run(workspaceId, userId, action, entityType, entityId ? String(entityId) : null, details ? JSON.stringify(details) : null);
+function normalizeNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function safeJsonParse(value, fallback) {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function json(value) {
+  return JSON.stringify(value ?? null);
+}
+
+
+function generateTenDigitAccountId() {
+  const firstDigit = String(crypto.randomInt(1, 10));
+  const remaining = String(crypto.randomInt(0, 1_000_000_000)).padStart(9, '0');
+  return `${firstDigit}${remaining}`;
+}
+
+
+function generateSevenDigitInvoiceNo(workspaceId) {
+  for (let i = 0; i < 50; i += 1) {
+    const invoiceNo = String(crypto.randomInt(1_000_000, 10_000_000));
+    const exists = db.prepare(`
+      SELECT id
+      FROM invoices
+      WHERE workspace_id = ? AND invoice_no = ?
+      LIMIT 1
+    `).get(workspaceId, invoiceNo);
+
+    if (!exists) return invoiceNo;
+  }
+
+  throw new Error('Unable to generate a unique 7-digit invoice number');
+}
+
+function ensureUserAccountId(userId) {
+  const existing = db.prepare('SELECT account_id FROM users WHERE id = ?').get(userId);
+  if (existing?.account_id) return String(existing.account_id);
+
+  for (let i = 0; i < 20; i += 1) {
+    const accountId = generateTenDigitAccountId();
+    try {
+      db.prepare(`
+        UPDATE users
+        SET account_id = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND (account_id IS NULL OR account_id = '')
+      `).run(accountId, userId);
+
+      const saved = db.prepare('SELECT account_id FROM users WHERE id = ?').get(userId);
+      if (saved?.account_id) return String(saved.account_id);
+    } catch (error) {
+      if (!String(error.message || '').includes('UNIQUE')) throw error;
+    }
+  }
+
+  throw new Error('Unable to generate a unique 10-digit account ID');
+}
+
+function getUserAccountProfile(userId) {
+  const row = db.prepare(`
+    SELECT id, full_name AS fullName, email, role, account_id AS accountId
+    FROM users
+    WHERE id = ?
+    LIMIT 1
+  `).get(userId);
+
+  if (!row) return null;
+  return {
+    id: row.id,
+    fullName: row.fullName,
+    email: row.email,
+    role: row.role,
+    accountId: String(row.accountId || ensureUserAccountId(userId)),
+  };
+}
+
+function calculatePurchaseAmount(input = {}) {
+  const explicit = normalizeNumber(input.amount, NaN);
+  if (Number.isFinite(explicit)) return explicit;
+  return normalizeNumber(input.quantity, 0) * normalizeNumber(input.costPrice, 0);
+}
+
+function buildPurchaseExpensePayload({ purchaseId, purchaseDate, amount }) {
+  const normalizedDate = normalizeText(purchaseDate) || nowIso().slice(0, 10);
+  const normalizedAmount = normalizeNumber(amount, 0);
+  return {
+    date: normalizedDate,
+    amount: normalizedAmount,
+    detail: `On ${normalizedDate}, Items were purchased for amount ${normalizedAmount}.`,
+    category: 'Purchasing',
+    linkedSource: 'purchase',
+    linkedPurchaseId: String(purchaseId),
+    autoGenerated: true,
+    locked: true,
+  };
+}
+
+function syncPurchaseExpense(workspaceId, purchaseId, purchaseDate, amount) {
+  const payload = buildPurchaseExpensePayload({ purchaseId, purchaseDate, amount });
+  const existing = db.prepare(`
+    SELECT id
+    FROM expenses
+    WHERE workspace_id = ?
+      AND json_extract(payload_json, '$.linkedSource') = 'purchase'
+      AND json_extract(payload_json, '$.linkedPurchaseId') = ?
+    LIMIT 1
+  `).get(workspaceId, String(purchaseId));
+
+  if (existing) {
+    db.prepare(`
+      UPDATE expenses
+      SET payload_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND workspace_id = ?
+    `).run(json(payload), existing.id, workspaceId);
+    return String(existing.id);
+  }
+
+  const result = db.prepare(`
+    INSERT INTO expenses (workspace_id, payload_json)
+    VALUES (?, ?)
+  `).run(workspaceId, json(payload));
+  return String(result.lastInsertRowid);
+}
+
+function removePurchaseExpense(workspaceId, purchaseId) {
+  db.prepare(`
+    DELETE FROM expenses
+    WHERE workspace_id = ?
+      AND json_extract(payload_json, '$.linkedSource') = 'purchase'
+      AND json_extract(payload_json, '$.linkedPurchaseId') = ?
+  `).run(workspaceId, String(purchaseId));
+}
+
+function syncAllPurchaseExpenses(workspaceId) {
+  const purchases = db.prepare(`
+    SELECT id, purchase_date AS purchaseDate, quantity, cost_price AS costPrice, extra_json AS extraJson
+    FROM purchases
+    WHERE workspace_id = ?
+  `).all(workspaceId);
+
+  const activeIds = new Set();
+  purchases.forEach((row) => {
+    const extras = safeJsonParse(row.extraJson, {});
+    const purchaseId = String(row.id);
+    activeIds.add(purchaseId);
+    syncPurchaseExpense(
+      workspaceId,
+      purchaseId,
+      row.purchaseDate,
+      calculatePurchaseAmount({ quantity: row.quantity, costPrice: row.costPrice, amount: extras.amount })
+    );
+  });
+
+  const linkedExpenses = db.prepare(`
+    SELECT id, json_extract(payload_json, '$.linkedPurchaseId') AS linkedPurchaseId
+    FROM expenses
+    WHERE workspace_id = ?
+      AND json_extract(payload_json, '$.linkedSource') = 'purchase'
+  `).all(workspaceId);
+
+  linkedExpenses.forEach((row) => {
+    if (!activeIds.has(String(row.linkedPurchaseId || ''))) {
+      db.prepare('DELETE FROM expenses WHERE id = ? AND workspace_id = ?').run(row.id, workspaceId);
+    }
+  });
+}
+
+function getCompanyDefaults(workspaceName = 'CresscoX') {
+  return {
+    name: workspaceName || 'CresscoX',
+    address: '17 Market Street, Berlin',
+    phone: '+49 30 000000',
+    email: 'sales@cresscox.com',
+  };
+}
+
+function getSettingsDefaults() {
+  return {
+    collapseFormsByDefault: true,
+    showDashboardActivity: true,
+    enableB2B: false,
+    enableBarcode: false,
+    summaryMode: 'numbers',
+    summaryWidgets: ['sales', 'expenses', 'profit'],
+    visibleNavTabs: ['dashboard', 'customers', 'inventory', 'purchasing', 'sales', 'invoice', 'expenses', 'cases', 'opportunities', 'tasks', 'returns', 'emails', 'barcode'],
+    activityModules: ['customers', 'inventory', 'purchasing', 'invoice', 'expenses', 'tasks', 'returns'],
+    businessName: 'CresscoX',
+    businessLogo: '',
+    invoiceTagline: 'Thank you for your business.',
+    businessMode: 'b2c',
+  };
 }
 
 function generateToken(user) {
@@ -348,144 +259,795 @@ function generateToken(user) {
 }
 
 function auth(req, res, next) {
-  const header = req.headers.authorization;
-  if (!header || !header.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing token' });
+  const raw = req.headers.authorization || '';
+  const token = raw.startsWith('Bearer ') ? raw.slice(7) : '';
+
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required' });
   }
 
-  const token = header.slice(7);
-
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    req.user = jwt.verify(token, JWT_SECRET);
     next();
   } catch (error) {
-    return res.status(401).json({ error: 'Invalid token' });
+    return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
 
 function requireWorkspaceAccess(req, res, next) {
-  const workspaceId = Number(req.params.workspaceId || req.body.workspaceId || req.query.workspaceId);
+  const workspaceId = Number(req.params.workspaceId);
   if (!workspaceId) {
-    return res.status(400).json({ error: 'workspaceId is required' });
+    return res.status(400).json({ error: 'Invalid workspace ID' });
   }
 
   const membership = db.prepare(`
-    SELECT * FROM workspace_members
-    WHERE workspace_id = ? AND user_id = ?
+    SELECT wm.workspace_id, wm.member_role, w.name AS workspace_name
+    FROM workspace_members wm
+    JOIN workspaces w ON w.id = wm.workspace_id
+    WHERE wm.workspace_id = ? AND wm.user_id = ?
+    LIMIT 1
   `).get(workspaceId, req.user.userId);
 
   if (!membership) {
-    return res.status(403).json({ error: 'No access to this workspace' });
+    return res.status(403).json({ error: 'You do not have access to this workspace' });
   }
 
   req.workspaceId = workspaceId;
-  req.membership = membership;
+  req.workspace = membership;
   next();
 }
 
-function recalculateInventory(workspaceId) {
-  const items = db.prepare(`
-    SELECT id, item_code, minimum_qty, sale_price, cost_price, item_name
-    FROM inventory_items WHERE workspace_id = ?
-  `).all(workspaceId);
+function logAudit({ workspaceId = null, userId = null, action = '', entityType = '', entityId = null, details = null }) {
+  db.prepare(`
+    INSERT INTO audit_log (workspace_id, user_id, action, entity_type, entity_id, details_json)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(workspaceId, userId, action, entityType, entityId, json(details));
+}
 
-  const map = new Map();
-  for (const item of items) {
-    map.set(item.item_code.toLowerCase(), {
-      ...item,
-      current_stock: 0,
-    });
+function ensureWorkspaceSettings(workspaceId, workspaceName = 'CresscoX') {
+  const existing = db.prepare('SELECT * FROM workspace_settings WHERE workspace_id = ?').get(workspaceId);
+  if (existing) return existing;
+
+  const company = getCompanyDefaults(workspaceName);
+  const settings = {
+    ...getSettingsDefaults(),
+    businessName: company.name,
+  };
+
+  db.prepare(`
+    INSERT INTO workspace_settings (
+      workspace_id,
+      company_name,
+      company_address,
+      company_phone,
+      company_email,
+      business_logo,
+      invoice_tagline,
+      settings_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    workspaceId,
+    company.name,
+    company.address,
+    company.phone,
+    company.email,
+    '',
+    settings.invoiceTagline,
+    json(settings)
+  );
+
+  return db.prepare('SELECT * FROM workspace_settings WHERE workspace_id = ?').get(workspaceId);
+}
+
+function getWorkspaceSettings(workspaceId, userId = null) {
+  const workspace = db.prepare('SELECT name FROM workspaces WHERE id = ?').get(workspaceId);
+  const row = ensureWorkspaceSettings(workspaceId, workspace?.name || 'CresscoX');
+  const rawSettings = safeJsonParse(row.settings_json, {});
+  const settings = {
+    ...getSettingsDefaults(),
+    ...rawSettings,
+    businessName: row.company_name || rawSettings.businessName || 'CresscoX',
+    businessLogo: row.business_logo || rawSettings.businessLogo || '',
+    invoiceTagline: row.invoice_tagline || rawSettings.invoiceTagline || 'Thank you for your business.',
+  };
+
+  const company = {
+    name: row.company_name || settings.businessName || 'CresscoX',
+    address: row.company_address || '',
+    phone: row.company_phone || '',
+    email: row.company_email || '',
+  };
+
+  const account = userId ? getUserAccountProfile(userId) : null;
+  return { company, settings, account };
+}
+
+function updateWorkspaceSettings(workspaceId, payload = {}, userId = null) {
+  const current = getWorkspaceSettings(workspaceId, userId);
+
+  const company = {
+    ...current.company,
+    ...(payload.company || {}),
+  };
+
+  const settings = {
+    ...current.settings,
+    ...(payload.settings || {}),
+  };
+
+  if (payload.businessName) {
+    company.name = normalizeText(payload.businessName);
+    settings.businessName = company.name;
   }
+  if (payload.businessLogo !== undefined) settings.businessLogo = payload.businessLogo || '';
+  if (payload.invoiceTagline !== undefined) settings.invoiceTagline = payload.invoiceTagline || '';
 
-  const purchases = db.prepare(`
-    SELECT item_code, item_name, quantity, cost_price
-    FROM purchases WHERE workspace_id = ?
-  `).all(workspaceId);
+  if (settings.businessName) company.name = settings.businessName;
 
-  for (const p of purchases) {
-    const key = p.item_code.toLowerCase();
-    if (!map.has(key)) {
-      const insert = db.prepare(`
-        INSERT INTO inventory_items
-        (workspace_id, item_code, item_name, current_stock, minimum_qty, sale_price, cost_price)
-        VALUES (?, ?, ?, 0, 0, 0, ?)
-      `);
-      const result = insert.run(workspaceId, p.item_code, p.item_name, p.cost_price || 0);
-      map.set(key, {
-        id: result.lastInsertRowid,
-        item_code: p.item_code,
-        item_name: p.item_name,
-        minimum_qty: 0,
-        sale_price: 0,
-        cost_price: p.cost_price || 0,
-        current_stock: 0,
-      });
+  db.prepare(`
+    UPDATE workspace_settings
+    SET company_name = ?,
+        company_address = ?,
+        company_phone = ?,
+        company_email = ?,
+        business_logo = ?,
+        invoice_tagline = ?,
+        settings_json = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE workspace_id = ?
+  `).run(
+    company.name,
+    company.address,
+    company.phone,
+    company.email,
+    settings.businessLogo || '',
+    settings.invoiceTagline || '',
+    json(settings),
+    workspaceId
+  );
+
+  return getWorkspaceSettings(workspaceId, userId);
+}
+
+function upsertCustomerByName(workspaceId, customerName, customerPhone = '', customerAddress = '') {
+  const name = normalizeText(customerName);
+  if (!name) return null;
+
+  const existing = db.prepare(`
+    SELECT id, phone, address
+    FROM customers
+    WHERE workspace_id = ? AND lower(name) = lower(?)
+    LIMIT 1
+  `).get(workspaceId, name);
+
+  if (existing) {
+    if ((customerPhone && !existing.phone) || (customerAddress && !existing.address)) {
+      db.prepare(`
+        UPDATE customers
+        SET phone = CASE WHEN phone = '' THEN ? ELSE phone END,
+            address = CASE WHEN address = '' THEN ? ELSE address END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(customerPhone || '', customerAddress || '', existing.id);
     }
-    const item = map.get(key);
-    item.current_stock += Number(p.quantity || 0);
-    item.cost_price = Number(p.cost_price || item.cost_price || 0);
+    return existing.id;
   }
 
-  const invoiceLines = db.prepare(`
-    SELECT ii.item_code, ii.quantity
+  const result = db.prepare(`
+    INSERT INTO customers (workspace_id, name, phone, email, address, notes)
+    VALUES (?, ?, ?, '', ?, 'Auto-created from invoice')
+  `).run(workspaceId, name, customerPhone || '', customerAddress || '');
+
+  return result.lastInsertRowid;
+}
+
+function recalculateInventory(workspaceId) {
+  const inventoryRows = db.prepare(`
+    SELECT id, item_code, current_stock
+    FROM inventory_items
+    WHERE workspace_id = ?
+  `).all(workspaceId);
+
+  const purchasesByCode = db.prepare(`
+    SELECT item_code, COALESCE(SUM(quantity), 0) AS qty
+    FROM purchases
+    WHERE workspace_id = ?
+    GROUP BY item_code
+  `).all(workspaceId);
+
+  const salesByCode = db.prepare(`
+    SELECT ii.item_code, COALESCE(SUM(ii.quantity), 0) AS qty
     FROM invoice_items ii
     JOIN invoices i ON i.id = ii.invoice_id
     WHERE i.workspace_id = ?
+    GROUP BY ii.item_code
   `).all(workspaceId);
 
-  for (const line of invoiceLines) {
-    const key = line.item_code.toLowerCase();
-    if (map.has(key)) {
-      map.get(key).current_stock -= Number(line.quantity || 0);
-    }
-  }
+  const returnsByCode = db.prepare(`
+    SELECT item_code, COALESCE(SUM(quantity), 0) AS qty
+    FROM returns_refunds
+    WHERE workspace_id = ? AND inventory_action = 'restock'
+    GROUP BY item_code
+  `).all(workspaceId);
 
-  const update = db.prepare(`
+  const purchaseMap = new Map(purchasesByCode.map((row) => [row.item_code, Number(row.qty || 0)]));
+  const salesMap = new Map(salesByCode.map((row) => [row.item_code, Number(row.qty || 0)]));
+  const returnsMap = new Map(returnsByCode.map((row) => [row.item_code, Number(row.qty || 0)]));
+
+  const updateStmt = db.prepare(`
     UPDATE inventory_items
-    SET current_stock = ?, cost_price = ?, updated_at = CURRENT_TIMESTAMP
+    SET current_stock = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `);
 
   const tx = db.transaction(() => {
-    for (const item of map.values()) {
-      update.run(item.current_stock, item.cost_price || 0, item.id);
+    for (const item of inventoryRows) {
+      const purchased = purchaseMap.get(item.item_code) || 0;
+      const sold = salesMap.get(item.item_code) || 0;
+      const returned = returnsMap.get(item.item_code) || 0;
+      const nextStock = purchased - sold + returned;
+      updateStmt.run(nextStock, item.id);
     }
   });
+
   tx();
 }
+
+function normalizeInvoicePayload(body = {}) {
+  const items = Array.isArray(body.items) ? body.items : [];
+  const normalizedItems = items.map((item) => {
+    const quantity = normalizeNumber(item.quantity, 0);
+    const price = normalizeNumber(item.price ?? item.salePrice, 0);
+    const costPrice = normalizeNumber(item.costPrice, 0);
+    const lineTotal = normalizeNumber(item.lineTotal, quantity * price);
+    const lineProfit = normalizeNumber(item.lineProfit, lineTotal - quantity * costPrice);
+
+    return {
+      itemCode: normalizeText(item.itemCode),
+      itemName: normalizeText(item.itemName),
+      barcode: normalizeText(item.barcode),
+      quantity,
+      price,
+      costPrice,
+      lineTotal,
+      lineProfit,
+      note: normalizeText(item.note),
+    };
+  });
+
+  const subtotal = normalizeNumber(
+    body.subtotal,
+    normalizedItems.reduce((sum, item) => sum + item.lineTotal, 0)
+  );
+  const discount = normalizeNumber(body.discount, 0);
+  const tax = normalizeNumber(body.tax, 0);
+  const total = normalizeNumber(body.total, subtotal - discount + tax);
+  const profit = normalizeNumber(
+    body.profit,
+    normalizedItems.reduce((sum, item) => sum + item.lineProfit, 0) - discount
+  );
+
+  return {
+    invoiceNo: normalizeText(body.invoiceNo),
+    invoiceDate: normalizeText(body.invoiceDate) || nowIso().slice(0, 10),
+    customerName: normalizeText(body.customerName),
+    customerPhone: normalizeText(body.customerPhone),
+    customerAddress: normalizeText(body.customerAddress),
+    customerEmail: normalizeText(body.customerEmail),
+    notes: normalizeText(body.notes),
+    currency: normalizeText(body.currency) || 'EUR',
+    subtotal,
+    discount,
+    tax,
+    total,
+    profit,
+    items: normalizedItems,
+  };
+}
+
+function getInvoiceWithItems(invoiceId) {
+  const invoice = db.prepare(`
+    SELECT
+      id,
+      workspace_id AS workspaceId,
+      invoice_no AS invoiceNo,
+      invoice_date AS date,
+      customer_name AS customerName,
+      customer_phone AS customerPhone,
+      customer_address AS customerAddress,
+      customer_email AS customerEmail,
+      subtotal,
+      discount,
+      tax,
+      total,
+      profit,
+      currency,
+      notes,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM invoices
+    WHERE id = ?
+  `).get(invoiceId);
+
+  if (!invoice) return null;
+
+  const items = db.prepare(`
+    SELECT
+      id,
+      item_code AS itemCode,
+      item_name AS itemName,
+      barcode,
+      quantity,
+      price,
+      cost_price AS costPrice,
+      line_total AS lineTotal,
+      line_profit AS lineProfit,
+      note
+    FROM invoice_items
+    WHERE invoice_id = ?
+    ORDER BY id ASC
+  `).all(invoiceId);
+
+  return { ...invoice, items };
+}
+
+function getGenericRowsTable(tableName, workspaceId) {
+  return db.prepare(`
+    SELECT id, workspace_id AS workspaceId, payload_json AS payloadJson, created_at AS createdAt, updated_at AS updatedAt
+    FROM ${tableName}
+    WHERE workspace_id = ?
+    ORDER BY id DESC
+  `).all(workspaceId).map((row) => ({
+    id: String(row.id),
+    ...safeJsonParse(row.payloadJson, {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }));
+}
+
+function createGenericModuleRoutes(routeName, tableName, entityType) {
+  app.get(`/api/workspaces/:workspaceId/${routeName}`, auth, requireWorkspaceAccess, (req, res) => {
+    res.json(getGenericRowsTable(tableName, req.workspaceId));
+  });
+
+  app.post(`/api/workspaces/:workspaceId/${routeName}`, auth, requireWorkspaceAccess, (req, res) => {
+    const payload = { ...(req.body || {}) };
+    const result = db.prepare(`
+      INSERT INTO ${tableName} (workspace_id, payload_json)
+      VALUES (?, ?)
+    `).run(req.workspaceId, json(payload));
+
+    logAudit({
+      workspaceId: req.workspaceId,
+      userId: req.user.userId,
+      action: 'create',
+      entityType,
+      entityId: result.lastInsertRowid,
+      details: payload,
+    });
+
+    res.status(201).json({ id: String(result.lastInsertRowid) });
+  });
+
+  app.put(`/api/workspaces/:workspaceId/${routeName}/:id`, auth, requireWorkspaceAccess, (req, res) => {
+    const payload = { ...(req.body || {}) };
+    db.prepare(`
+      UPDATE ${tableName}
+      SET payload_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND workspace_id = ?
+    `).run(json(payload), req.params.id, req.workspaceId);
+
+    logAudit({
+      workspaceId: req.workspaceId,
+      userId: req.user.userId,
+      action: 'update',
+      entityType,
+      entityId: req.params.id,
+      details: payload,
+    });
+
+    res.json({ ok: true });
+  });
+
+  app.delete(`/api/workspaces/:workspaceId/${routeName}/:id`, auth, requireWorkspaceAccess, (req, res) => {
+    db.prepare(`
+      DELETE FROM ${tableName}
+      WHERE id = ? AND workspace_id = ?
+    `).run(req.params.id, req.workspaceId);
+
+    logAudit({
+      workspaceId: req.workspaceId,
+      userId: req.user.userId,
+      action: 'delete',
+      entityType,
+      entityId: req.params.id,
+    });
+
+    res.json({ ok: true });
+  });
+}
+
+function initDb() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      full_name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'admin',
+      account_id TEXT UNIQUE,
+      google_id TEXT,
+      is_verified INTEGER NOT NULL DEFAULT 1,
+      verification_token TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      owner_user_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_members (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      member_role TEXT NOT NULL DEFAULT 'admin',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (workspace_id, user_id),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL UNIQUE,
+      company_name TEXT NOT NULL DEFAULT 'CresscoX',
+      company_address TEXT NOT NULL DEFAULT '',
+      company_phone TEXT NOT NULL DEFAULT '',
+      company_email TEXT NOT NULL DEFAULT '',
+      business_logo TEXT NOT NULL DEFAULT '',
+      invoice_tagline TEXT NOT NULL DEFAULT '',
+      settings_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS customers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS inventory_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      item_code TEXT NOT NULL,
+      item_name TEXT NOT NULL,
+      current_stock REAL NOT NULL DEFAULT 0,
+      minimum_qty REAL NOT NULL DEFAULT 0,
+      sale_price REAL NOT NULL DEFAULT 0,
+      cost_price REAL NOT NULL DEFAULT 0,
+      barcode TEXT NOT NULL DEFAULT '',
+      extra_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (workspace_id, item_code),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS purchases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      purchase_date TEXT NOT NULL,
+      supplier TEXT NOT NULL DEFAULT '',
+      item_code TEXT NOT NULL,
+      item_name TEXT NOT NULL,
+      quantity REAL NOT NULL DEFAULT 0,
+      cost_price REAL NOT NULL DEFAULT 0,
+      sale_price REAL NOT NULL DEFAULT 0,
+      note TEXT NOT NULL DEFAULT '',
+      extra_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS invoices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      invoice_no TEXT NOT NULL,
+      invoice_date TEXT NOT NULL,
+      customer_name TEXT NOT NULL DEFAULT '',
+      customer_phone TEXT NOT NULL DEFAULT '',
+      customer_address TEXT NOT NULL DEFAULT '',
+      customer_email TEXT NOT NULL DEFAULT '',
+      subtotal REAL NOT NULL DEFAULT 0,
+      discount REAL NOT NULL DEFAULT 0,
+      tax REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      profit REAL NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'EUR',
+      notes TEXT NOT NULL DEFAULT '',
+      extra_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS invoice_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      invoice_id INTEGER NOT NULL,
+      item_code TEXT NOT NULL DEFAULT '',
+      item_name TEXT NOT NULL DEFAULT '',
+      barcode TEXT NOT NULL DEFAULT '',
+      quantity REAL NOT NULL DEFAULT 0,
+      price REAL NOT NULL DEFAULT 0,
+      cost_price REAL NOT NULL DEFAULT 0,
+      line_total REAL NOT NULL DEFAULT 0,
+      line_profit REAL NOT NULL DEFAULT 0,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS barcode_mappings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      barcode TEXT NOT NULL,
+      item_code TEXT NOT NULL DEFAULT '',
+      item_name TEXT NOT NULL DEFAULT '',
+      sale_price REAL NOT NULL DEFAULT 0,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (workspace_id, barcode),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS returns_refunds (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      invoice_no TEXT NOT NULL DEFAULT '',
+      customer TEXT NOT NULL DEFAULT '',
+      item_code TEXT NOT NULL DEFAULT '',
+      item_name TEXT NOT NULL DEFAULT '',
+      quantity REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'Pending',
+      refund_amount REAL NOT NULL DEFAULT 0,
+      inventory_action TEXT NOT NULL DEFAULT 'none',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS cases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS opportunities (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS emails (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS online_sales_orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER,
+      user_id INTEGER,
+      action TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT,
+      details_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+  `);
+
+  const ensureColumn = (tableName, columnName, sqlDefinition, afterSql = null) => {
+    const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+    if (!columns.some((column) => column.name === columnName)) {
+      db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${sqlDefinition}`);
+      
+      if (afterSql) db.exec(afterSql);
+    }
+  };
+
+  ensureColumn('users', 'account_id', 'TEXT');
+  ensureColumn('users', 'google_id', 'TEXT');
+  ensureColumn('users', 'is_verified', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn('users', 'verification_token', 'TEXT');
+  ensureColumn('users', 'updated_at', "TEXT", `UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+
+  ensureColumn('workspaces', 'updated_at', "TEXT", `UPDATE workspaces SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+  ensureColumn('workspace_settings', 'updated_at', "TEXT", `UPDATE workspace_settings SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+  ensureColumn('customers', 'phone', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('customers', 'email', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('customers', 'address', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('customers', 'notes', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('customers', 'updated_at', "TEXT", `UPDATE customers SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+
+  ensureColumn('inventory_items', 'current_stock', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('inventory_items', 'minimum_qty', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('inventory_items', 'sale_price', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('inventory_items', 'cost_price', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('inventory_items', 'barcode', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('inventory_items', 'extra_json', "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn('inventory_items', 'updated_at', "TEXT", `UPDATE inventory_items SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+
+  ensureColumn('purchases', 'purchase_date', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('purchases', 'supplier', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('purchases', 'item_code', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('purchases', 'item_name', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('purchases', 'quantity', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('purchases', 'cost_price', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('purchases', 'sale_price', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('purchases', 'note', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('purchases', 'extra_json', "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn('purchases', 'updated_at', "TEXT", `UPDATE purchases SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+
+  ensureColumn('invoices', 'customer_phone', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('invoices', 'customer_address', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('invoices', 'customer_email', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('invoices', 'subtotal', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('invoices', 'discount', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('invoices', 'tax', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('invoices', 'total', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('invoices', 'profit', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('invoices', 'currency', "TEXT NOT NULL DEFAULT 'EUR'");
+  ensureColumn('invoices', 'notes', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('invoices', 'extra_json', "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn('invoices', 'updated_at', "TEXT", `UPDATE invoices SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+
+  ensureColumn('invoice_items', 'barcode', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('invoice_items', 'quantity', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('invoice_items', 'price', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('invoice_items', 'cost_price', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('invoice_items', 'line_total', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('invoice_items', 'line_profit', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('invoice_items', 'note', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('invoice_items', 'updated_at', "TEXT", `UPDATE invoice_items SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+
+  ensureColumn('barcode_mappings', 'item_code', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('barcode_mappings', 'item_name', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('barcode_mappings', 'sale_price', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('barcode_mappings', 'payload_json', "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn('barcode_mappings', 'updated_at', "TEXT", `UPDATE barcode_mappings SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+
+  ensureColumn('returns_refunds', 'refund_amount', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn('returns_refunds', 'inventory_action', "TEXT NOT NULL DEFAULT 'none'");
+  ensureColumn('returns_refunds', 'payload_json', "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn('returns_refunds', 'updated_at', "TEXT", `UPDATE returns_refunds SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+
+  ensureColumn('expenses', 'payload_json', "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn('expenses', 'updated_at', "TEXT", `UPDATE expenses SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+  ensureColumn('cases', 'payload_json', "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn('cases', 'updated_at', "TEXT", `UPDATE cases SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+  ensureColumn('opportunities', 'payload_json', "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn('opportunities', 'updated_at', "TEXT", `UPDATE opportunities SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+  ensureColumn('tasks', 'payload_json', "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn('tasks', 'updated_at', "TEXT", `UPDATE tasks SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+  ensureColumn('emails', 'payload_json', "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn('emails', 'updated_at', "TEXT", `UPDATE emails SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+  ensureColumn('online_sales_orders', 'payload_json', "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn('online_sales_orders', 'updated_at', "TEXT", `UPDATE online_sales_orders SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
+
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_account_id_unique ON users(account_id) WHERE account_id IS NOT NULL`);
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_workspace_invoice_no_unique ON invoices(workspace_id, invoice_no)`);
+
+  const usersMissingAccountId = db.prepare(`SELECT id FROM users WHERE account_id IS NULL OR account_id = ''`).all();
+  usersMissingAccountId.forEach((row) => ensureUserAccountId(row.id));
+}
+
+initDb();
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, message: 'CresscoX backend running' });
 });
 
+app.get('/api/config', (_req, res) => {
+  res.json({
+    googleClientId: GOOGLE_CLIENT_ID,
+  });
+});
+
+app.get('/login', (_req, res) => {
+  res.sendFile(path.join(FRONTEND_DIR, 'loginregister.html'));
+});
+
+app.get(['/app', '/'], (_req, res) => {
+  res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
+});
+
 // AUTH
 app.post('/api/auth/register', (req, res) => {
-  const { fullName, email, password, workspaceName } = req.body;
+  const fullName = normalizeText(req.body.fullName);
+  const email = normalizeText(req.body.email).toLowerCase();
+  const password = String(req.body.password || '');
+  const workspaceName = normalizeText(req.body.workspaceName);
 
   if (!fullName || !email || !password || !workspaceName) {
     return res.status(400).json({ error: 'fullName, email, password, workspaceName are required' });
   }
 
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.trim().toLowerCase());
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
   if (existing) {
     return res.status(409).json({ error: 'Email already registered' });
   }
 
   const passwordHash = bcrypt.hashSync(password, 10);
 
-  const tx = db.transaction(() => {
+  const result = db.transaction(() => {
     const userResult = db.prepare(`
       INSERT INTO users (full_name, email, password_hash, role)
       VALUES (?, ?, ?, 'admin')
-    `).run(fullName.trim(), email.trim().toLowerCase(), passwordHash);
+    `).run(fullName, email, passwordHash);
 
     const userId = userResult.lastInsertRowid;
 
     const workspaceResult = db.prepare(`
       INSERT INTO workspaces (name, owner_user_id)
       VALUES (?, ?)
-    `).run(workspaceName.trim(), userId);
+    `).run(workspaceName, userId);
 
     const workspaceId = workspaceResult.lastInsertRowid;
 
@@ -493,6 +1055,8 @@ app.post('/api/auth/register', (req, res) => {
       INSERT INTO workspace_members (workspace_id, user_id, member_role)
       VALUES (?, ?, 'admin')
     `).run(workspaceId, userId);
+
+    ensureWorkspaceSettings(workspaceId, workspaceName);
 
     logAudit({
       workspaceId,
@@ -504,33 +1068,31 @@ app.post('/api/auth/register', (req, res) => {
     });
 
     return { userId, workspaceId };
-  });
+  })();
 
-  const result = tx();
-  const user = db.prepare('SELECT id, email, role FROM users WHERE id = ?').get(result.userId);
-  const token = generateToken(user);
+  const user = db.prepare('SELECT id, email, role, full_name AS fullName FROM users WHERE id = ?').get(result.userId);
+  const token = generateToken({ id: user.id, email: user.email, role: user.role });
+  const accountId = ensureUserAccountId(user.id);
 
   res.status(201).json({
     message: 'Registered successfully',
     token,
-    user,
+    user: { ...user, accountId },
     workspaceId: result.workspaceId,
+    accountId,
   });
 });
 
 app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body;
+  const email = normalizeText(req.body.email).toLowerCase();
+  const password = String(req.body.password || '');
+
   if (!email || !password) {
     return res.status(400).json({ error: 'email and password are required' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.trim().toLowerCase());
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
-
-  const valid = bcrypt.compareSync(password, user.password_hash);
-  if (!valid) {
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
@@ -539,32 +1101,154 @@ app.post('/api/auth/login', (req, res) => {
     FROM workspace_members wm
     JOIN workspaces w ON w.id = wm.workspace_id
     WHERE wm.user_id = ?
+    ORDER BY wm.workspace_id ASC
   `).all(user.id);
 
   const token = generateToken(user);
+  const accountId = ensureUserAccountId(user.id);
 
   res.json({
     token,
-    user: { id: user.id, email: user.email, role: user.role, fullName: user.full_name },
+    user: { id: user.id, email: user.email, role: user.role, fullName: user.full_name, accountId },
+    workspaceId: memberships[0]?.workspace_id || null,
+    accountId,
     workspaces: memberships,
   });
 });
 
+app.post('/api/auth/google', async (req, res) => {
+  if (!googleClient) {
+    return res.status(503).json({ error: 'Google login is not configured on the server' });
+  }
+
+  const credential = req.body.credential;
+  if (!credential) {
+    return res.status(400).json({ error: 'Google credential is required' });
+  }
+
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    const email = normalizeText(payload?.email).toLowerCase();
+    const fullName = normalizeText(payload?.name, 'Google User');
+    const googleId = normalizeText(payload?.sub);
+    const emailVerified = Boolean(payload?.email_verified);
+
+    if (!email || !emailVerified) {
+      return res.status(400).json({ error: 'Google email is missing or not verified' });
+    }
+
+    let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    let workspaceId = null;
+
+    if (!user) {
+      const txResult = db.transaction(() => {
+        const userResult = db.prepare(`
+          INSERT INTO users (full_name, email, password_hash, role, google_id, is_verified)
+          VALUES (?, ?, '', 'admin', ?, 1)
+        `).run(fullName, email, googleId);
+
+        const userId = userResult.lastInsertRowid;
+        const workspaceResult = db.prepare(`
+          INSERT INTO workspaces (name, owner_user_id)
+          VALUES (?, ?)
+        `).run(`${fullName}'s Workspace`, userId);
+
+        workspaceId = workspaceResult.lastInsertRowid;
+
+        db.prepare(`
+          INSERT INTO workspace_members (workspace_id, user_id, member_role)
+          VALUES (?, ?, 'admin')
+        `).run(workspaceId, userId);
+
+        ensureWorkspaceSettings(workspaceId, `${fullName}'s Workspace`);
+
+        return { userId, workspaceId };
+      })();
+
+      user = db.prepare('SELECT * FROM users WHERE id = ?').get(txResult.userId);
+      workspaceId = txResult.workspaceId;
+    } else {
+      db.prepare(`
+        UPDATE users
+        SET google_id = ?, is_verified = 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(googleId, user.id);
+
+      const membership = db.prepare(`
+        SELECT workspace_id
+        FROM workspace_members
+        WHERE user_id = ?
+        ORDER BY workspace_id ASC
+        LIMIT 1
+      `).get(user.id);
+      workspaceId = membership?.workspace_id || null;
+    }
+
+    const token = generateToken(user);
+    const accountId = ensureUserAccountId(user.id);
+
+    res.json({
+      message: 'Google login successful',
+      token,
+      workspaceId,
+      accountId,
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        role: user.role,
+        accountId,
+      },
+    });
+  } catch (error) {
+    console.error('Google auth error:', error);
+    res.status(401).json({ error: 'Invalid Google credential' });
+  }
+});
+
 app.get('/api/workspaces', auth, (req, res) => {
-  const workspaces = db.prepare(`
+  const rows = db.prepare(`
     SELECT wm.workspace_id, wm.member_role, w.name AS workspace_name
     FROM workspace_members wm
     JOIN workspaces w ON w.id = wm.workspace_id
     WHERE wm.user_id = ?
+    ORDER BY wm.workspace_id ASC
   `).all(req.user.userId);
 
-  res.json(workspaces);
+  res.json(rows);
+});
+
+// SETTINGS / COMPANY
+app.get('/api/workspaces/:workspaceId/settings', auth, requireWorkspaceAccess, (req, res) => {
+  syncAllPurchaseExpenses(req.workspaceId);
+  res.json(getWorkspaceSettings(req.workspaceId, req.user.userId));
+});
+
+app.put('/api/workspaces/:workspaceId/settings', auth, requireWorkspaceAccess, (req, res) => {
+  const updated = updateWorkspaceSettings(req.workspaceId, req.body || {}, req.user.userId);
+
+  logAudit({
+    workspaceId: req.workspaceId,
+    userId: req.user.userId,
+    action: 'update',
+    entityType: 'settings',
+    entityId: req.workspaceId,
+    details: req.body || {},
+  });
+
+  res.json(updated);
 });
 
 // CUSTOMERS
 app.get('/api/workspaces/:workspaceId/customers', auth, requireWorkspaceAccess, (req, res) => {
   const rows = db.prepare(`
-    SELECT * FROM customers
+    SELECT id, name, phone, email, address, notes, created_at AS createdAt, updated_at AS updatedAt
+    FROM customers
     WHERE workspace_id = ?
     ORDER BY id DESC
   `).all(req.workspaceId);
@@ -572,7 +1256,12 @@ app.get('/api/workspaces/:workspaceId/customers', auth, requireWorkspaceAccess, 
 });
 
 app.post('/api/workspaces/:workspaceId/customers', auth, requireWorkspaceAccess, (req, res) => {
-  const { name, phone = '', email = '', address = '', notes = '' } = req.body;
+  const name = normalizeText(req.body.name);
+  const phone = normalizeText(req.body.phone);
+  const email = normalizeText(req.body.email);
+  const address = normalizeText(req.body.address);
+  const notes = normalizeText(req.body.notes);
+
   if (!name) return res.status(400).json({ error: 'name is required' });
 
   const result = db.prepare(`
@@ -580,20 +1269,17 @@ app.post('/api/workspaces/:workspaceId/customers', auth, requireWorkspaceAccess,
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(req.workspaceId, name, phone, email, address, notes);
 
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'create',
-    entityType: 'customer',
-    entityId: result.lastInsertRowid,
-    details: { name },
-  });
-
-  res.status(201).json({ id: result.lastInsertRowid });
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'create', entityType: 'customer', entityId: result.lastInsertRowid, details: { name } });
+  res.status(201).json({ id: String(result.lastInsertRowid) });
 });
 
 app.put('/api/workspaces/:workspaceId/customers/:id', auth, requireWorkspaceAccess, (req, res) => {
-  const { name, phone = '', email = '', address = '', notes = '' } = req.body;
+  const name = normalizeText(req.body.name);
+  const phone = normalizeText(req.body.phone);
+  const email = normalizeText(req.body.email);
+  const address = normalizeText(req.body.address);
+  const notes = normalizeText(req.body.notes);
+
   if (!name) return res.status(400).json({ error: 'name is required' });
 
   db.prepare(`
@@ -602,458 +1288,19 @@ app.put('/api/workspaces/:workspaceId/customers/:id', auth, requireWorkspaceAcce
     WHERE id = ? AND workspace_id = ?
   `).run(name, phone, email, address, notes, req.params.id, req.workspaceId);
 
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'update',
-    entityType: 'customer',
-    entityId: req.params.id,
-    details: { name },
-  });
-
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'update', entityType: 'customer', entityId: req.params.id, details: { name } });
   res.json({ ok: true });
 });
 
 app.delete('/api/workspaces/:workspaceId/customers/:id', auth, requireWorkspaceAccess, (req, res) => {
   db.prepare('DELETE FROM customers WHERE id = ? AND workspace_id = ?').run(req.params.id, req.workspaceId);
-
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'delete',
-    entityType: 'customer',
-    entityId: req.params.id,
-  });
-
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'delete', entityType: 'customer', entityId: req.params.id });
   res.json({ ok: true });
 });
 
 // INVENTORY
 app.get('/api/workspaces/:workspaceId/inventory', auth, requireWorkspaceAccess, (req, res) => {
   const rows = db.prepare(`
-    SELECT * FROM inventory_items
-    WHERE workspace_id = ?
-    ORDER BY id DESC
-  `).all(req.workspaceId);
-  res.json(rows);
-});
-
-app.post('/api/workspaces/:workspaceId/inventory', auth, requireWorkspaceAccess, (req, res) => {
-  const {
-    itemCode,
-    itemName,
-    currentStock = 0,
-    minimumQty = 0,
-    salePrice = 0,
-    costPrice = 0,
-  } = req.body;
-
-  if (!itemCode || !itemName) {
-    return res.status(400).json({ error: 'itemCode and itemName are required' });
-  }
-
-  const result = db.prepare(`
-    INSERT INTO inventory_items
-    (workspace_id, item_code, item_name, current_stock, minimum_qty, sale_price, cost_price)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    req.workspaceId,
-    itemCode,
-    itemName,
-    Number(currentStock || 0),
-    Number(minimumQty || 0),
-    Number(salePrice || 0),
-    Number(costPrice || 0)
-  );
-
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'create',
-    entityType: 'inventory_item',
-    entityId: result.lastInsertRowid,
-    details: { itemCode, itemName },
-  });
-
-  res.status(201).json({ id: result.lastInsertRowid });
-});
-
-app.put('/api/workspaces/:workspaceId/inventory/:id', auth, requireWorkspaceAccess, (req, res) => {
-  const {
-    itemCode,
-    itemName,
-    currentStock = 0,
-    minimumQty = 0,
-    salePrice = 0,
-    costPrice = 0,
-  } = req.body;
-
-  db.prepare(`
-    UPDATE inventory_items
-    SET item_code = ?, item_name = ?, current_stock = ?, minimum_qty = ?, sale_price = ?, cost_price = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND workspace_id = ?
-  `).run(
-    itemCode,
-    itemName,
-    Number(currentStock || 0),
-    Number(minimumQty || 0),
-    Number(salePrice || 0),
-    Number(costPrice || 0),
-    req.params.id,
-    req.workspaceId
-  );
-
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'update',
-    entityType: 'inventory_item',
-    entityId: req.params.id,
-    details: { itemCode, itemName },
-  });
-
-  res.json({ ok: true });
-});
-
-app.delete('/api/workspaces/:workspaceId/inventory/:id', auth, requireWorkspaceAccess, (req, res) => {
-  db.prepare('DELETE FROM inventory_items WHERE id = ? AND workspace_id = ?').run(req.params.id, req.workspaceId);
-
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'delete',
-    entityType: 'inventory_item',
-    entityId: req.params.id,
-  });
-
-  res.json({ ok: true });
-});
-
-// PURCHASES
-app.get('/api/workspaces/:workspaceId/purchases', auth, requireWorkspaceAccess, (req, res) => {
-  const rows = db.prepare(`
-    SELECT * FROM purchases
-    WHERE workspace_id = ?
-    ORDER BY id DESC
-  `).all(req.workspaceId);
-  res.json(rows);
-});
-
-app.post('/api/workspaces/:workspaceId/purchases', auth, requireWorkspaceAccess, (req, res) => {
-  const {
-    purchaseDate,
-    supplier = '',
-    itemCode,
-    itemName,
-    quantity,
-    costPrice = 0,
-    note = '',
-  } = req.body;
-
-  if (!purchaseDate || !itemCode || !itemName || !quantity) {
-    return res.status(400).json({ error: 'purchaseDate, itemCode, itemName, quantity are required' });
-  }
-
-  const tx = db.transaction(() => {
-    db.prepare(`
-      INSERT INTO purchases
-      (workspace_id, purchase_date, supplier, item_code, item_name, quantity, cost_price, note)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      req.workspaceId,
-      purchaseDate,
-      supplier,
-      itemCode,
-      itemName,
-      Number(quantity),
-      Number(costPrice || 0),
-      note
-    );
-
-    const existing = db.prepare(`
-      SELECT id FROM inventory_items WHERE workspace_id = ? AND item_code = ?
-    `).get(req.workspaceId, itemCode);
-
-    if (!existing) {
-      db.prepare(`
-        INSERT INTO inventory_items (workspace_id, item_code, item_name, current_stock, minimum_qty, sale_price, cost_price)
-        VALUES (?, ?, ?, 0, 0, 0, ?)
-      `).run(req.workspaceId, itemCode, itemName, Number(costPrice || 0));
-    }
-
-    recalculateInventory(req.workspaceId);
-  });
-
-  tx();
-
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'create',
-    entityType: 'purchase',
-    details: { itemCode, itemName, quantity },
-  });
-
-  res.status(201).json({ ok: true });
-});
-
-app.put('/api/workspaces/:workspaceId/purchases/:id', auth, requireWorkspaceAccess, (req, res) => {
-  const {
-    purchaseDate,
-    supplier = '',
-    itemCode,
-    itemName,
-    quantity,
-    costPrice = 0,
-    note = '',
-  } = req.body;
-
-  const tx = db.transaction(() => {
-    db.prepare(`
-      UPDATE purchases
-      SET purchase_date = ?, supplier = ?, item_code = ?, item_name = ?, quantity = ?, cost_price = ?, note = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND workspace_id = ?
-    `).run(
-      purchaseDate,
-      supplier,
-      itemCode,
-      itemName,
-      Number(quantity),
-      Number(costPrice || 0),
-      note,
-      req.params.id,
-      req.workspaceId
-    );
-
-    recalculateInventory(req.workspaceId);
-  });
-
-  tx();
-
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'update',
-    entityType: 'purchase',
-    entityId: req.params.id,
-    details: { itemCode, itemName, quantity },
-  });
-
-  res.json({ ok: true });
-});
-
-app.delete('/api/workspaces/:workspaceId/purchases/:id', auth, requireWorkspaceAccess, (req, res) => {
-  const tx = db.transaction(() => {
-    db.prepare('DELETE FROM purchases WHERE id = ? AND workspace_id = ?').run(req.params.id, req.workspaceId);
-    recalculateInventory(req.workspaceId);
-  });
-
-  tx();
-
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'delete',
-    entityType: 'purchase',
-    entityId: req.params.id,
-  });
-
-  res.json({ ok: true });
-});
-
-// INVOICES
-app.get('/api/workspaces/:workspaceId/invoices', auth, requireWorkspaceAccess, (req, res) => {
-  const invoices = db.prepare(`
-    SELECT * FROM invoices
-    WHERE workspace_id = ?
-    ORDER BY id DESC
-  `).all(req.workspaceId);
-
-  const invoiceItemsStmt = db.prepare(`
-    SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id ASC
-  `);
-
-  const data = invoices.map(inv => ({
-    ...inv,
-    items: invoiceItemsStmt.all(inv.id),
-  }));
-
-  res.json(data);
-});
-
-app.post('/api/workspaces/:workspaceId/invoices', auth, requireWorkspaceAccess, (req, res) => {
-  const {
-    invoiceNo,
-    invoiceDate,
-    customerName = '',
-    customerPhone = '',
-    customerAddress = '',
-    items = [],
-  } = req.body;
-
-  if (!invoiceNo || !invoiceDate || !Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: 'invoiceNo, invoiceDate and items are required' });
-  }
-
-  const total = items.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
-  const profit = items.reduce((sum, item) => sum + Number(item.lineProfit || 0), 0);
-
-  const tx = db.transaction(() => {
-    const invoiceResult = db.prepare(`
-      INSERT INTO invoices
-      (workspace_id, invoice_no, invoice_date, customer_name, customer_phone, customer_address, total, profit)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      req.workspaceId,
-      invoiceNo,
-      invoiceDate,
-      customerName,
-      customerPhone,
-      customerAddress,
-      total,
-      profit
-    );
-
-    const invoiceId = invoiceResult.lastInsertRowid;
-    const insertItem = db.prepare(`
-      INSERT INTO invoice_items
-      (invoice_id, item_code, item_name, quantity, price, cost_price, line_total, line_profit)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    for (const item of items) {
-      insertItem.run(
-        invoiceId,
-        item.itemCode,
-        item.itemName,
-        Number(item.quantity || 0),
-        Number(item.price || 0),
-        Number(item.costPrice || 0),
-        Number(item.lineTotal || 0),
-        Number(item.lineProfit || 0)
-      );
-    }
-
-    recalculateInventory(req.workspaceId);
-  });
-
-  tx();
-
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'create',
-    entityType: 'invoice',
-    details: { invoiceNo, total, profit },
-  });
-
-  res.status(201).json({ ok: true });
-});
-
-app.put('/api/workspaces/:workspaceId/invoices/:id', auth, requireWorkspaceAccess, (req, res) => {
-  const {
-    invoiceNo,
-    invoiceDate,
-    customerName = '',
-    customerPhone = '',
-    customerAddress = '',
-    items = [],
-  } = req.body;
-
-  const total = items.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
-  const profit = items.reduce((sum, item) => sum + Number(item.lineProfit || 0), 0);
-
-  const tx = db.transaction(() => {
-    db.prepare(`
-      UPDATE invoices
-      SET invoice_no = ?, invoice_date = ?, customer_name = ?, customer_phone = ?, customer_address = ?, total = ?, profit = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND workspace_id = ?
-    `).run(
-      invoiceNo,
-      invoiceDate,
-      customerName,
-      customerPhone,
-      customerAddress,
-      total,
-      profit,
-      req.params.id,
-      req.workspaceId
-    );
-
-    db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(req.params.id);
-
-    const insertItem = db.prepare(`
-      INSERT INTO invoice_items
-      (invoice_id, item_code, item_name, quantity, price, cost_price, line_total, line_profit)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    for (const item of items) {
-      insertItem.run(
-        req.params.id,
-        item.itemCode,
-        item.itemName,
-        Number(item.quantity || 0),
-        Number(item.price || 0),
-        Number(item.costPrice || 0),
-        Number(item.lineTotal || 0),
-        Number(item.lineProfit || 0)
-      );
-    }
-
-    recalculateInventory(req.workspaceId);
-  });
-
-  tx();
-
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'update',
-    entityType: 'invoice',
-    entityId: req.params.id,
-    details: { invoiceNo, total, profit },
-  });
-
-  res.json({ ok: true });
-});
-
-app.delete('/api/workspaces/:workspaceId/invoices/:id', auth, requireWorkspaceAccess, (req, res) => {
-  const tx = db.transaction(() => {
-    db.prepare('DELETE FROM invoices WHERE id = ? AND workspace_id = ?').run(req.params.id, req.workspaceId);
-    recalculateInventory(req.workspaceId);
-  });
-
-  tx();
-
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'delete',
-    entityType: 'invoice',
-    entityId: req.params.id,
-  });
-
-  res.json({ ok: true });
-});
-
-// FULL WORKSPACE DATA
-function getWorkspaceFullData(workspaceId) {
-  const company = {
-    name: 'CresscoX',
-    address: '17 Market Street, Berlin',
-    phone: '+49 30 000000',
-    email: 'sales@cresscox.com',
-  };
-
-  const customers = db.prepare(`
-    SELECT id, name, phone, email, address, notes
-    FROM customers
-    WHERE workspace_id = ?
-    ORDER BY id DESC
-  `).all(workspaceId);
-
-  const inventory = db.prepare(`
     SELECT
       id,
       item_code AS itemCode,
@@ -1061,13 +1308,108 @@ function getWorkspaceFullData(workspaceId) {
       current_stock AS currentStock,
       minimum_qty AS minimumQty,
       sale_price AS salePrice,
-      cost_price AS costPrice
+      cost_price AS costPrice,
+      barcode,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      extra_json AS extraJson
     FROM inventory_items
     WHERE workspace_id = ?
     ORDER BY id DESC
-  `).all(workspaceId);
+  `).all(req.workspaceId).map((row) => ({
+    ...row,
+    ...(safeJsonParse(row.extraJson, {})),
+  }));
+  res.json(rows);
+});
 
-  const purchases = db.prepare(`
+app.post('/api/workspaces/:workspaceId/inventory', auth, requireWorkspaceAccess, (req, res) => {
+  const itemCode = normalizeText(req.body.itemCode);
+  const itemName = normalizeText(req.body.itemName);
+  const minimumQty = normalizeNumber(req.body.minimumQty, 0);
+  const salePrice = normalizeNumber(req.body.salePrice, 0);
+  const costPrice = normalizeNumber(req.body.costPrice, 0);
+  const barcode = normalizeText(req.body.barcode);
+  const extras = { ...req.body };
+  delete extras.itemCode; delete extras.itemName; delete extras.minimumQty; delete extras.salePrice; delete extras.costPrice; delete extras.barcode; delete extras.currentStock;
+
+  if (!itemCode || !itemName) {
+    return res.status(400).json({ error: 'itemCode and itemName are required' });
+  }
+
+  const result = db.prepare(`
+    INSERT INTO inventory_items (workspace_id, item_code, item_name, current_stock, minimum_qty, sale_price, cost_price, barcode, extra_json)
+    VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)
+  `).run(req.workspaceId, itemCode, itemName, minimumQty, salePrice, costPrice, barcode, json(extras));
+
+  if (barcode) {
+    db.prepare(`
+      INSERT INTO barcode_mappings (workspace_id, barcode, item_code, item_name, sale_price, payload_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(workspace_id, barcode)
+      DO UPDATE SET item_code = excluded.item_code,
+                    item_name = excluded.item_name,
+                    sale_price = excluded.sale_price,
+                    payload_json = excluded.payload_json,
+                    updated_at = CURRENT_TIMESTAMP
+    `).run(req.workspaceId, barcode, itemCode, itemName, salePrice, json({ barcode, itemCode, itemName, salePrice }));
+  }
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'create', entityType: 'inventory', entityId: result.lastInsertRowid, details: { itemCode, itemName } });
+  res.status(201).json({ id: String(result.lastInsertRowid) });
+});
+
+app.put('/api/workspaces/:workspaceId/inventory/:id', auth, requireWorkspaceAccess, (req, res) => {
+  const itemCode = normalizeText(req.body.itemCode);
+  const itemName = normalizeText(req.body.itemName);
+  const minimumQty = normalizeNumber(req.body.minimumQty, 0);
+  const salePrice = normalizeNumber(req.body.salePrice, 0);
+  const costPrice = normalizeNumber(req.body.costPrice, 0);
+  const barcode = normalizeText(req.body.barcode);
+  const currentStock = normalizeNumber(req.body.currentStock, 0);
+  const extras = { ...req.body };
+  delete extras.itemCode; delete extras.itemName; delete extras.minimumQty; delete extras.salePrice; delete extras.costPrice; delete extras.barcode; delete extras.currentStock;
+
+  if (!itemCode || !itemName) {
+    return res.status(400).json({ error: 'itemCode and itemName are required' });
+  }
+
+  db.prepare(`
+    UPDATE inventory_items
+    SET item_code = ?, item_name = ?, current_stock = ?, minimum_qty = ?, sale_price = ?, cost_price = ?, barcode = ?, extra_json = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND workspace_id = ?
+  `).run(itemCode, itemName, currentStock, minimumQty, salePrice, costPrice, barcode, json(extras), req.params.id, req.workspaceId);
+
+  if (barcode) {
+    db.prepare(`
+      INSERT INTO barcode_mappings (workspace_id, barcode, item_code, item_name, sale_price, payload_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(workspace_id, barcode)
+      DO UPDATE SET item_code = excluded.item_code,
+                    item_name = excluded.item_name,
+                    sale_price = excluded.sale_price,
+                    payload_json = excluded.payload_json,
+                    updated_at = CURRENT_TIMESTAMP
+    `).run(req.workspaceId, barcode, itemCode, itemName, salePrice, json({ barcode, itemCode, itemName, salePrice }));
+  }
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'update', entityType: 'inventory', entityId: req.params.id, details: { itemCode, itemName } });
+  res.json({ ok: true });
+});
+
+app.delete('/api/workspaces/:workspaceId/inventory/:id', auth, requireWorkspaceAccess, (req, res) => {
+  const row = db.prepare('SELECT item_code, barcode FROM inventory_items WHERE id = ? AND workspace_id = ?').get(req.params.id, req.workspaceId);
+  db.prepare('DELETE FROM inventory_items WHERE id = ? AND workspace_id = ?').run(req.params.id, req.workspaceId);
+  if (row?.barcode) {
+    db.prepare('DELETE FROM barcode_mappings WHERE workspace_id = ? AND barcode = ?').run(req.workspaceId, row.barcode);
+  }
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'delete', entityType: 'inventory', entityId: req.params.id, details: row || {} });
+  res.json({ ok: true });
+});
+
+// PURCHASING
+app.get('/api/workspaces/:workspaceId/purchases', auth, requireWorkspaceAccess, (req, res) => {
+  const rows = db.prepare(`
     SELECT
       id,
       purchase_date AS date,
@@ -1076,361 +1418,839 @@ function getWorkspaceFullData(workspaceId) {
       item_name AS itemName,
       quantity,
       cost_price AS costPrice,
-      note
+      sale_price AS salePrice,
+      note,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      extra_json AS extraJson
     FROM purchases
     WHERE workspace_id = ?
     ORDER BY id DESC
-  `).all(workspaceId);
-
-  const invoices = db.prepare(`
-    SELECT
-      id,
-      invoice_no AS invoiceNo,
-      invoice_date AS date,
-      customer_name AS customerName,
-      customer_phone AS customerPhone,
-      customer_address AS customerAddress,
-      total,
-      profit
-    FROM invoices
-    WHERE workspace_id = ?
-    ORDER BY id DESC
-  `).all(workspaceId);
-
-  const invoiceItemsStmt = db.prepare(`
-    SELECT
-      id,
-      item_code AS itemCode,
-      item_name AS itemName,
-      quantity,
-      price,
-      cost_price AS costPrice,
-      line_total AS lineTotal,
-      line_profit AS lineProfit
-    FROM invoice_items
-    WHERE invoice_id = ?
-    ORDER BY id ASC
-  `);
-
-  const invoicesWithItems = invoices.map((inv) => ({
-    ...inv,
-    items: invoiceItemsStmt.all(inv.id),
+  `).all(req.workspaceId).map((row) => ({
+    ...row,
+    ...(safeJsonParse(row.extraJson, {})),
   }));
-
-  return {
-    company,
-    customers,
-    inventory,
-    purchases,
-    invoices: invoicesWithItems,
-  };
-}
-
-app.get('/api/workspaces/:workspaceId/full-data', auth, requireWorkspaceAccess, (req, res) => {
-  const data = getWorkspaceFullData(req.workspaceId);
-  res.json(data);
-});
-
-app.put('/api/workspaces/:workspaceId/full-data', auth, requireWorkspaceAccess, (req, res) => {
-  const payload = req.body || {};
-  const customers = Array.isArray(payload.customers) ? payload.customers : [];
-  const inventory = Array.isArray(payload.inventory) ? payload.inventory : [];
-  const purchases = Array.isArray(payload.purchases) ? payload.purchases : [];
-  const invoices = Array.isArray(payload.invoices) ? payload.invoices : [];
-
-  const tx = db.transaction(() => {
-    const invoiceIds = db.prepare(`
-      SELECT id FROM invoices WHERE workspace_id = ?
-    `).all(req.workspaceId).map((row) => row.id);
-
-    if (invoiceIds.length) {
-      const deleteInvoiceItems = db.prepare(`DELETE FROM invoice_items WHERE invoice_id = ?`);
-      for (const invoiceId of invoiceIds) {
-        deleteInvoiceItems.run(invoiceId);
-      }
-    }
-
-    db.prepare(`DELETE FROM invoices WHERE workspace_id = ?`).run(req.workspaceId);
-    db.prepare(`DELETE FROM purchases WHERE workspace_id = ?`).run(req.workspaceId);
-    db.prepare(`DELETE FROM inventory_items WHERE workspace_id = ?`).run(req.workspaceId);
-    db.prepare(`DELETE FROM customers WHERE workspace_id = ?`).run(req.workspaceId);
-
-    const insertCustomer = db.prepare(`
-      INSERT INTO customers (workspace_id, name, phone, email, address, notes)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-
-    for (const row of customers) {
-      insertCustomer.run(
-        req.workspaceId,
-        String(row.name || '').trim(),
-        String(row.phone || '').trim(),
-        String(row.email || '').trim(),
-        String(row.address || '').trim(),
-        String(row.notes || '').trim()
-      );
-    }
-
-    const insertInventory = db.prepare(`
-      INSERT INTO inventory_items
-      (workspace_id, item_code, item_name, current_stock, minimum_qty, sale_price, cost_price)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    for (const row of inventory) {
-      insertInventory.run(
-        req.workspaceId,
-        String(row.itemCode || row.item_code || '').trim(),
-        String(row.itemName || row.item_name || '').trim(),
-        Number(row.currentStock ?? row.current_stock ?? 0),
-        Number(row.minimumQty ?? row.minimum_qty ?? 0),
-        Number(row.salePrice ?? row.sale_price ?? 0),
-        Number(row.costPrice ?? row.cost_price ?? 0)
-      );
-    }
-
-    const insertPurchase = db.prepare(`
-      INSERT INTO purchases
-      (workspace_id, purchase_date, supplier, item_code, item_name, quantity, cost_price, note)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    for (const row of purchases) {
-      insertPurchase.run(
-        req.workspaceId,
-        row.date || row.purchaseDate || row.purchase_date || new Date().toISOString().slice(0, 10),
-        String(row.supplier || '').trim(),
-        String(row.itemCode || row.item_code || '').trim(),
-        String(row.itemName || row.item_name || '').trim(),
-        Number(row.quantity || 0),
-        Number(row.costPrice ?? row.cost_price ?? 0),
-        String(row.note || '').trim()
-      );
-    }
-
-    const insertInvoice = db.prepare(`
-      INSERT INTO invoices
-      (workspace_id, invoice_no, invoice_date, customer_name, customer_phone, customer_address, total, profit)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const insertInvoiceItem = db.prepare(`
-      INSERT INTO invoice_items
-      (invoice_id, item_code, item_name, quantity, price, cost_price, line_total, line_profit)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    for (const inv of invoices) {
-      const items = Array.isArray(inv.items) ? inv.items : [];
-      const total = items.reduce((sum, item) => sum + Number(item.lineTotal || item.line_total || 0), 0);
-      const profit = items.reduce((sum, item) => sum + Number(item.lineProfit || item.line_profit || 0), 0);
-
-      const invoiceResult = insertInvoice.run(
-        req.workspaceId,
-        String(inv.invoiceNo || inv.invoice_no || '').trim(),
-        inv.date || inv.invoiceDate || inv.invoice_date || new Date().toISOString().slice(0, 10),
-        String(inv.customerName || inv.customer_name || '').trim(),
-        String(inv.customerPhone || inv.customer_phone || '').trim(),
-        String(inv.customerAddress || inv.customer_address || '').trim(),
-        total,
-        profit
-      );
-
-      for (const item of items) {
-        insertInvoiceItem.run(
-          invoiceResult.lastInsertRowid,
-          String(item.itemCode || item.item_code || '').trim(),
-          String(item.itemName || item.item_name || '').trim(),
-          Number(item.quantity || 0),
-          Number(item.price || 0),
-          Number(item.costPrice ?? item.cost_price ?? 0),
-          Number(item.lineTotal || item.line_total || 0),
-          Number(item.lineProfit || item.line_profit || 0)
-        );
-      }
-    }
-
-    recalculateInventory(req.workspaceId);
-  });
-
-  tx();
-
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'replace',
-    entityType: 'workspace_data',
-  });
-
-  res.json({ ok: true });
-});
-
-app.delete('/api/workspaces/:workspaceId/full-data', auth, requireWorkspaceAccess, (req, res) => {
-  const tx = db.transaction(() => {
-    const invoiceIds = db.prepare(`
-      SELECT id FROM invoices WHERE workspace_id = ?
-    `).all(req.workspaceId).map((row) => row.id);
-
-    if (invoiceIds.length) {
-      const deleteInvoiceItems = db.prepare(`DELETE FROM invoice_items WHERE invoice_id = ?`);
-      for (const invoiceId of invoiceIds) {
-        deleteInvoiceItems.run(invoiceId);
-      }
-    }
-
-    db.prepare(`DELETE FROM invoices WHERE workspace_id = ?`).run(req.workspaceId);
-    db.prepare(`DELETE FROM purchases WHERE workspace_id = ?`).run(req.workspaceId);
-    db.prepare(`DELETE FROM inventory_items WHERE workspace_id = ?`).run(req.workspaceId);
-    db.prepare(`DELETE FROM customers WHERE workspace_id = ?`).run(req.workspaceId);
-  });
-
-  tx();
-
-  logAudit({
-    workspaceId: req.workspaceId,
-    userId: req.user.userId,
-    action: 'clear',
-    entityType: 'workspace_data',
-  });
-
-  res.json({ ok: true });
-});
-// REPORTS
-app.get('/api/workspaces/:workspaceId/reports/monthly-sales', auth, requireWorkspaceAccess, (req, res) => {
-  const rows = db.prepare(`
-    SELECT invoice_date, total, profit, invoice_no, customer_name
-    FROM invoices
-    WHERE workspace_id = ?
-    ORDER BY invoice_date DESC, id DESC
-  `).all(req.workspaceId);
-
-  const grouped = {};
-  for (const row of rows) {
-    const monthKey = new Date(row.invoice_date).toLocaleString('en-US', {
-      month: 'long',
-      year: 'numeric',
-    });
-
-    if (!grouped[monthKey]) {
-      grouped[monthKey] = {
-        month: monthKey,
-        totalSales: 0,
-        totalProfit: 0,
-        invoices: [],
-      };
-    }
-
-    grouped[monthKey].totalSales += Number(row.total || 0);
-    grouped[monthKey].totalProfit += Number(row.profit || 0);
-    grouped[monthKey].invoices.push(row);
-  }
-
-  res.json(Object.values(grouped));
-});
-
-// BACKUPS
-app.post('/api/admin/backup', auth, (req, res) => {
-  const filename = `backup-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`;
-  const backupPath = path.join(BACKUP_DIR, filename);
-
-  fs.copyFileSync(DB_PATH, backupPath);
-
-  logAudit({
-    userId: req.user.userId,
-    action: 'backup',
-    entityType: 'system',
-    details: { filename },
-  });
-
-  res.json({ ok: true, filename });
-});
-
-app.get('/api/admin/backups', auth, (_req, res) => {
-  const files = fs.readdirSync(BACKUP_DIR)
-    .filter(name => name.endsWith('.sqlite'))
-    .map(name => ({ name }))
-    .sort((a, b) => b.name.localeCompare(a.name));
-
-  res.json(files);
-});
-
-app.post('/api/admin/restore', auth, (req, res) => {
-  const { filename } = req.body;
-  if (!filename) {
-    return res.status(400).json({ error: 'filename is required' });
-  }
-
-  const backupPath = path.join(BACKUP_DIR, filename);
-  if (!fs.existsSync(backupPath)) {
-    return res.status(404).json({ error: 'Backup not found' });
-  }
-
-  db.close();
-  fs.copyFileSync(backupPath, DB_PATH);
-
-  logAudit({
-    userId: req.user.userId,
-    action: 'restore',
-    entityType: 'system',
-    details: { filename },
-  });
-
-  res.json({ ok: true, message: 'Restore complete. Restart server now.' });
-});
-
-app.get('/api/workspaces/:workspaceId/audit-logs', auth, requireWorkspaceAccess, (req, res) => {
-  const rows = db.prepare(`
-    SELECT * FROM audit_logs
-    WHERE workspace_id = ? OR workspace_id IS NULL
-    ORDER BY id DESC
-    LIMIT 300
-  `).all(req.workspaceId);
 
   res.json(rows);
 });
 
-app.get('/', (req, res) => {
-  res.sendFile(path.join(FRONTEND_DIR, 'loginregister.html'));
+app.post('/api/workspaces/:workspaceId/purchases', auth, requireWorkspaceAccess, (req, res) => {
+  const purchaseDate = normalizeText(req.body.purchaseDate || req.body.date) || nowIso().slice(0, 10);
+  const supplier = normalizeText(req.body.supplier);
+  const itemCode = normalizeText(req.body.itemCode);
+  const itemName = normalizeText(req.body.itemName);
+  const quantity = normalizeNumber(req.body.quantity, 0);
+  const costPrice = normalizeNumber(req.body.costPrice, 0);
+  const salePrice = normalizeNumber(req.body.salePrice, 0);
+  const note = normalizeText(req.body.note);
+  const extras = { ...req.body };
+  delete extras.purchaseDate; delete extras.date; delete extras.supplier; delete extras.itemCode; delete extras.itemName; delete extras.quantity; delete extras.costPrice; delete extras.salePrice; delete extras.note;
+
+  if (!itemCode || !itemName) {
+    return res.status(400).json({ error: 'itemCode and itemName are required' });
+  }
+
+  let purchaseId = null;
+  const purchaseAmount = calculatePurchaseAmount({ ...req.body, quantity, costPrice });
+  db.transaction(() => {
+    const purchaseResult = db.prepare(`
+      INSERT INTO purchases (workspace_id, purchase_date, supplier, item_code, item_name, quantity, cost_price, sale_price, note, extra_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(req.workspaceId, purchaseDate, supplier, itemCode, itemName, quantity, costPrice, salePrice, note, json(extras));
+
+    purchaseId = purchaseResult.lastInsertRowid;
+
+    const existingInventory = db.prepare(`
+      SELECT id FROM inventory_items WHERE workspace_id = ? AND item_code = ?
+    `).get(req.workspaceId, itemCode);
+
+    if (!existingInventory) {
+      db.prepare(`
+        INSERT INTO inventory_items (workspace_id, item_code, item_name, current_stock, minimum_qty, sale_price, cost_price, barcode, extra_json)
+        VALUES (?, ?, ?, 0, 0, ?, ?, '', '{}')
+      `).run(req.workspaceId, itemCode, itemName, salePrice, costPrice);
+    } else {
+      db.prepare(`
+        UPDATE inventory_items
+        SET item_name = ?, sale_price = ?, cost_price = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(itemName, salePrice, costPrice, existingInventory.id);
+    }
+
+    syncPurchaseExpense(req.workspaceId, purchaseId, purchaseDate, purchaseAmount);
+    recalculateInventory(req.workspaceId);
+  })();
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'create', entityType: 'purchase', entityId: purchaseId, details: { itemCode, itemName, quantity, amount: purchaseAmount } });
+  res.status(201).json({ ok: true, id: String(purchaseId) });
+});
+
+app.put('/api/workspaces/:workspaceId/purchases/:id', auth, requireWorkspaceAccess, (req, res) => {
+  const purchaseDate = normalizeText(req.body.purchaseDate || req.body.date) || nowIso().slice(0, 10);
+  const supplier = normalizeText(req.body.supplier);
+  const itemCode = normalizeText(req.body.itemCode);
+  const itemName = normalizeText(req.body.itemName);
+  const quantity = normalizeNumber(req.body.quantity, 0);
+  const costPrice = normalizeNumber(req.body.costPrice, 0);
+  const salePrice = normalizeNumber(req.body.salePrice, 0);
+  const note = normalizeText(req.body.note);
+  const extras = { ...req.body };
+  delete extras.purchaseDate; delete extras.date; delete extras.supplier; delete extras.itemCode; delete extras.itemName; delete extras.quantity; delete extras.costPrice; delete extras.salePrice; delete extras.note;
+
+  const purchaseAmount = calculatePurchaseAmount({ ...req.body, quantity, costPrice });
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE purchases
+      SET purchase_date = ?, supplier = ?, item_code = ?, item_name = ?, quantity = ?, cost_price = ?, sale_price = ?, note = ?, extra_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND workspace_id = ?
+    `).run(purchaseDate, supplier, itemCode, itemName, quantity, costPrice, salePrice, note, json(extras), req.params.id, req.workspaceId);
+
+    syncPurchaseExpense(req.workspaceId, req.params.id, purchaseDate, purchaseAmount);
+    recalculateInventory(req.workspaceId);
+  })();
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'update', entityType: 'purchase', entityId: req.params.id, details: { itemCode, itemName, quantity, amount: purchaseAmount } });
+  res.json({ ok: true });
+});
+
+app.delete('/api/workspaces/:workspaceId/purchases/:id', auth, requireWorkspaceAccess, (req, res) => {
+  db.transaction(() => {
+    db.prepare('DELETE FROM purchases WHERE id = ? AND workspace_id = ?').run(req.params.id, req.workspaceId);
+    removePurchaseExpense(req.workspaceId, req.params.id);
+    recalculateInventory(req.workspaceId);
+  })();
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'delete', entityType: 'purchase', entityId: req.params.id });
+  res.json({ ok: true });
+});
+
+// BARCODE LOOKUP
+app.get('/api/workspaces/:workspaceId/barcodes', auth, requireWorkspaceAccess, (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, barcode, item_code AS itemCode, item_name AS itemName, sale_price AS salePrice, payload_json AS payloadJson, created_at AS createdAt, updated_at AS updatedAt
+    FROM barcode_mappings
+    WHERE workspace_id = ?
+    ORDER BY id DESC
+  `).all(req.workspaceId).map((row) => ({
+    id: String(row.id),
+    barcode: row.barcode,
+    itemCode: row.itemCode,
+    itemName: row.itemName,
+    salePrice: row.salePrice,
+    ...safeJsonParse(row.payloadJson, {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }));
+  res.json(rows);
+});
+
+app.post('/api/workspaces/:workspaceId/barcodes', auth, requireWorkspaceAccess, (req, res) => {
+  const barcode = normalizeText(req.body.barcode);
+  const itemCode = normalizeText(req.body.itemCode);
+  const itemName = normalizeText(req.body.itemName);
+  const salePrice = normalizeNumber(req.body.salePrice, 0);
+  const payload = { ...req.body, barcode, itemCode, itemName, salePrice };
+
+  if (!barcode) return res.status(400).json({ error: 'barcode is required' });
+
+  db.prepare(`
+    INSERT INTO barcode_mappings (workspace_id, barcode, item_code, item_name, sale_price, payload_json)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, barcode)
+    DO UPDATE SET item_code = excluded.item_code,
+                  item_name = excluded.item_name,
+                  sale_price = excluded.sale_price,
+                  payload_json = excluded.payload_json,
+                  updated_at = CURRENT_TIMESTAMP
+  `).run(req.workspaceId, barcode, itemCode, itemName, salePrice, json(payload));
+
+  if (itemCode) {
+    const existingInventory = db.prepare('SELECT id FROM inventory_items WHERE workspace_id = ? AND item_code = ?').get(req.workspaceId, itemCode);
+    if (existingInventory) {
+      db.prepare(`
+        UPDATE inventory_items
+        SET barcode = ?, item_name = CASE WHEN item_name = '' THEN ? ELSE item_name END,
+            sale_price = CASE WHEN ? > 0 THEN ? ELSE sale_price END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(barcode, itemName, salePrice, salePrice, existingInventory.id);
+    } else if (itemName) {
+      db.prepare(`
+        INSERT INTO inventory_items (workspace_id, item_code, item_name, current_stock, minimum_qty, sale_price, cost_price, barcode, extra_json)
+        VALUES (?, ?, ?, 0, 0, ?, 0, ?, '{}')
+      `).run(req.workspaceId, itemCode, itemName, salePrice, barcode);
+    }
+  }
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'upsert', entityType: 'barcode', details: { barcode, itemCode, itemName } });
+  res.json({ ok: true });
+});
+
+app.get('/api/workspaces/:workspaceId/item-lookup', auth, requireWorkspaceAccess, (req, res) => {
+  const q = normalizeText(req.query.q);
+  if (!q) return res.json([]);
+
+  const rows = db.prepare(`
+    SELECT id, item_code AS itemCode, item_name AS itemName, sale_price AS salePrice, cost_price AS costPrice, barcode
+    FROM inventory_items
+    WHERE workspace_id = ?
+      AND (
+        lower(item_code) LIKE lower(?) OR
+        lower(item_name) LIKE lower(?) OR
+        barcode = ?
+      )
+    ORDER BY item_name ASC
+    LIMIT 20
+  `).all(req.workspaceId, `%${q}%`, `%${q}%`, q);
+
+  const barcodeRows = db.prepare(`
+    SELECT id, item_code AS itemCode, item_name AS itemName, sale_price AS salePrice, 0 AS costPrice, barcode
+    FROM barcode_mappings
+    WHERE workspace_id = ?
+      AND (
+        barcode = ? OR
+        lower(item_code) LIKE lower(?) OR
+        lower(item_name) LIKE lower(?)
+      )
+    ORDER BY item_name ASC
+    LIMIT 20
+  `).all(req.workspaceId, q, `%${q}%`, `%${q}%`);
+
+  const merged = new Map();
+  [...rows, ...barcodeRows].forEach((row) => {
+    const key = `${row.barcode || ''}|${row.itemCode || ''}|${row.itemName || ''}`;
+    if (!merged.has(key)) merged.set(key, row);
+  });
+
+  res.json([...merged.values()]);
+});
+
+// RETURNS
+app.get('/api/workspaces/:workspaceId/returns', auth, requireWorkspaceAccess, (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, invoice_no AS invoiceNo, customer, item_code AS itemCode, item_name AS itemName, quantity, status, refund_amount AS refundAmount, inventory_action AS inventoryAction, payload_json AS payloadJson, created_at AS createdAt, updated_at AS updatedAt
+    FROM returns_refunds
+    WHERE workspace_id = ?
+    ORDER BY id DESC
+  `).all(req.workspaceId).map((row) => ({
+    id: String(row.id),
+    invoiceNo: row.invoiceNo,
+    customer: row.customer,
+    itemCode: row.itemCode,
+    itemName: row.itemName,
+    quantity: row.quantity,
+    status: row.status,
+    refundAmount: row.refundAmount,
+    inventoryAction: row.inventoryAction,
+    ...safeJsonParse(row.payloadJson, {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }));
+  res.json(rows);
+});
+
+app.post('/api/workspaces/:workspaceId/returns', auth, requireWorkspaceAccess, (req, res) => {
+  const invoiceNo = normalizeText(req.body.invoiceNo);
+  const customer = normalizeText(req.body.customer);
+  const itemCode = normalizeText(req.body.itemCode);
+  const itemName = normalizeText(req.body.itemName);
+  const quantity = normalizeNumber(req.body.quantity, 0);
+  const status = normalizeText(req.body.status || 'Pending');
+  const refundAmount = normalizeNumber(req.body.refundAmount, 0);
+  const inventoryAction = normalizeText(req.body.inventoryAction || 'none');
+  const payload = { ...req.body, invoiceNo, customer, itemCode, itemName, quantity, status, refundAmount, inventoryAction };
+
+  const result = db.prepare(`
+    INSERT INTO returns_refunds (workspace_id, invoice_no, customer, item_code, item_name, quantity, status, refund_amount, inventory_action, payload_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(req.workspaceId, invoiceNo, customer, itemCode, itemName, quantity, status, refundAmount, inventoryAction, json(payload));
+
+  if (inventoryAction === 'restock') {
+    recalculateInventory(req.workspaceId);
+  }
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'create', entityType: 'return', entityId: result.lastInsertRowid, details: payload });
+  res.status(201).json({ id: String(result.lastInsertRowid) });
+});
+
+app.put('/api/workspaces/:workspaceId/returns/:id', auth, requireWorkspaceAccess, (req, res) => {
+  const invoiceNo = normalizeText(req.body.invoiceNo);
+  const customer = normalizeText(req.body.customer);
+  const itemCode = normalizeText(req.body.itemCode);
+  const itemName = normalizeText(req.body.itemName);
+  const quantity = normalizeNumber(req.body.quantity, 0);
+  const status = normalizeText(req.body.status || 'Pending');
+  const refundAmount = normalizeNumber(req.body.refundAmount, 0);
+  const inventoryAction = normalizeText(req.body.inventoryAction || 'none');
+  const payload = { ...req.body, invoiceNo, customer, itemCode, itemName, quantity, status, refundAmount, inventoryAction };
+
+  db.prepare(`
+    UPDATE returns_refunds
+    SET invoice_no = ?, customer = ?, item_code = ?, item_name = ?, quantity = ?, status = ?, refund_amount = ?, inventory_action = ?, payload_json = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND workspace_id = ?
+  `).run(invoiceNo, customer, itemCode, itemName, quantity, status, refundAmount, inventoryAction, json(payload), req.params.id, req.workspaceId);
+
+  recalculateInventory(req.workspaceId);
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'update', entityType: 'return', entityId: req.params.id, details: payload });
+  res.json({ ok: true });
+});
+
+app.delete('/api/workspaces/:workspaceId/returns/:id', auth, requireWorkspaceAccess, (req, res) => {
+  db.prepare('DELETE FROM returns_refunds WHERE id = ? AND workspace_id = ?').run(req.params.id, req.workspaceId);
+  recalculateInventory(req.workspaceId);
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'delete', entityType: 'return', entityId: req.params.id });
+  res.json({ ok: true });
+});
+
+// INVOICES
+app.get('/api/workspaces/:workspaceId/invoices', auth, requireWorkspaceAccess, (req, res) => {
+  const invoiceIds = db.prepare('SELECT id FROM invoices WHERE workspace_id = ? ORDER BY id DESC').all(req.workspaceId);
+  const data = invoiceIds.map((row) => getInvoiceWithItems(row.id)).filter(Boolean);
+  res.json(data);
+});
+
+app.post('/api/workspaces/:workspaceId/invoices', auth, requireWorkspaceAccess, (req, res) => {
+  const payload = normalizeInvoicePayload(req.body || {});
+
+  if (!payload.invoiceNo) return res.status(400).json({ error: 'invoiceNo is required' });
+  if (!payload.items.length) return res.status(400).json({ error: 'At least one invoice item is required' });
+
+  const result = db.transaction(() => {
+    const customerId = upsertCustomerByName(req.workspaceId, payload.customerName, payload.customerPhone, payload.customerAddress);
+
+    let finalInvoiceNo = normalizeText(payload.invoiceNo);
+
+    if (!/^\d{7}$/.test(finalInvoiceNo)) {
+      finalInvoiceNo = generateSevenDigitInvoiceNo(req.workspaceId);
+    } else {
+      const existingInvoice = db.prepare(`
+        SELECT id
+        FROM invoices
+        WHERE workspace_id = ? AND invoice_no = ?
+        LIMIT 1
+      `).get(req.workspaceId, finalInvoiceNo);
+
+      if (existingInvoice) {
+        finalInvoiceNo = generateSevenDigitInvoiceNo(req.workspaceId);
+      }
+    }
+
+    payload.invoiceNo = finalInvoiceNo;
+    const invoiceResult = db.prepare(`
+      
+      INSERT INTO invoices (
+        workspace_id, invoice_no, invoice_date, customer_name, customer_phone, customer_address, customer_email,
+        subtotal, discount, tax, total, profit, currency, notes, extra_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      req.workspaceId,
+      payload.invoiceNo,
+      payload.invoiceDate,
+      payload.customerName,
+      payload.customerPhone,
+      payload.customerAddress,
+      payload.customerEmail,
+      payload.subtotal,
+      payload.discount,
+      payload.tax,
+      payload.total,
+      payload.profit,
+      payload.currency,
+      payload.notes,
+      json({ customerId })
+    );
+
+    const invoiceId = invoiceResult.lastInsertRowid;
+    const insertItem = db.prepare(`
+      INSERT INTO invoice_items (invoice_id, item_code, item_name, barcode, quantity, price, cost_price, line_total, line_profit, note)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    payload.items.forEach((item) => {
+      insertItem.run(invoiceId, item.itemCode, item.itemName, item.barcode, item.quantity, item.price, item.costPrice, item.lineTotal, item.lineProfit, item.note);
+    });
+
+    recalculateInventory(req.workspaceId);
+    return invoiceId;
+  })();
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'create', entityType: 'invoice', entityId: result, details: { invoiceNo: payload.invoiceNo, total: payload.total, profit: payload.profit } });
+  res.status(201).json(getInvoiceWithItems(result));
+});
+
+app.put('/api/workspaces/:workspaceId/invoices/:id', auth, requireWorkspaceAccess, (req, res) => {
+  const payload = normalizeInvoicePayload(req.body || {});
+  let finalInvoiceNo = normalizeText(payload.invoiceNo);
+
+  if (!/^\d{7}$/.test(finalInvoiceNo)) {
+    finalInvoiceNo = generateSevenDigitInvoiceNo(req.workspaceId);
+  } else {
+    const existingInvoice = db.prepare(`
+      SELECT id
+      FROM invoices
+      WHERE workspace_id = ? AND invoice_no = ? AND id != ?
+      LIMIT 1
+    `).get(req.workspaceId, finalInvoiceNo, req.params.id);
+
+    if (existingInvoice) {
+      finalInvoiceNo = generateSevenDigitInvoiceNo(req.workspaceId);
+    }
+  }
+
+  payload.invoiceNo = finalInvoiceNo;
+  db.transaction(() => {
+    const customerId = upsertCustomerByName(req.workspaceId, payload.customerName, payload.customerPhone, payload.customerAddress);
+
+    db.prepare(`
+      UPDATE invoices
+      SET invoice_no = ?, invoice_date = ?, customer_name = ?, customer_phone = ?, customer_address = ?, customer_email = ?,
+          subtotal = ?, discount = ?, tax = ?, total = ?, profit = ?, currency = ?, notes = ?, extra_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND workspace_id = ?
+    `).run(
+      payload.invoiceNo,
+      payload.invoiceDate,
+      payload.customerName,
+      payload.customerPhone,
+      payload.customerAddress,
+      payload.customerEmail,
+      payload.subtotal,
+      payload.discount,
+      payload.tax,
+      payload.total,
+      payload.profit,
+      payload.currency,
+      payload.notes,
+      json({ customerId }),
+      req.params.id,
+      req.workspaceId
+    );
+
+    db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(req.params.id);
+
+    const insertItem = db.prepare(`
+      INSERT INTO invoice_items (invoice_id, item_code, item_name, barcode, quantity, price, cost_price, line_total, line_profit, note)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    payload.items.forEach((item) => {
+      insertItem.run(req.params.id, item.itemCode, item.itemName, item.barcode, item.quantity, item.price, item.costPrice, item.lineTotal, item.lineProfit, item.note);
+    });
+
+    recalculateInventory(req.workspaceId);
+  })();
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'update', entityType: 'invoice', entityId: req.params.id, details: { invoiceNo: payload.invoiceNo, total: payload.total, profit: payload.profit } });
+  res.json(getInvoiceWithItems(req.params.id));
+});
+
+app.delete('/api/workspaces/:workspaceId/invoices/:id', auth, requireWorkspaceAccess, (req, res) => {
+  db.transaction(() => {
+    db.prepare('DELETE FROM invoices WHERE id = ? AND workspace_id = ?').run(req.params.id, req.workspaceId);
+    recalculateInventory(req.workspaceId);
+  })();
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'delete', entityType: 'invoice', entityId: req.params.id });
+  res.json({ ok: true });
+});
+
+// GENERIC MODULES
+app.get('/api/workspaces/:workspaceId/expenses', auth, requireWorkspaceAccess, (req, res) => {
+  syncAllPurchaseExpenses(req.workspaceId);
+  res.json(getGenericRowsTable('expenses', req.workspaceId));
+});
+
+app.post('/api/workspaces/:workspaceId/expenses', auth, requireWorkspaceAccess, (req, res) => {
+  const payload = { ...(req.body || {}) };
+  const result = db.prepare(`
+    INSERT INTO expenses (workspace_id, payload_json)
+    VALUES (?, ?)
+  `).run(req.workspaceId, json(payload));
+
+  logAudit({
+    workspaceId: req.workspaceId,
+    userId: req.user.userId,
+    action: 'create',
+    entityType: 'expense',
+    entityId: result.lastInsertRowid,
+    details: payload,
+  });
+
+  res.status(201).json({ id: String(result.lastInsertRowid) });
+});
+
+app.put('/api/workspaces/:workspaceId/expenses/:id', auth, requireWorkspaceAccess, (req, res) => {
+  const existing = db.prepare(`
+    SELECT payload_json AS payloadJson
+    FROM expenses
+    WHERE id = ? AND workspace_id = ?
+    LIMIT 1
+  `).get(req.params.id, req.workspaceId);
+
+  const current = safeJsonParse(existing?.payloadJson, {});
+  if (current?.linkedSource === 'purchase') {
+    return res.status(400).json({ error: 'Linked purchasing expenses are auto-generated and cannot be edited directly' });
+  }
+
+  const payload = { ...(req.body || {}) };
+  db.prepare(`
+    UPDATE expenses
+    SET payload_json = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND workspace_id = ?
+  `).run(json(payload), req.params.id, req.workspaceId);
+
+  logAudit({
+    workspaceId: req.workspaceId,
+    userId: req.user.userId,
+    action: 'update',
+    entityType: 'expense',
+    entityId: req.params.id,
+    details: payload,
+  });
+
+  res.json({ ok: true });
+});
+
+app.delete('/api/workspaces/:workspaceId/expenses/:id', auth, requireWorkspaceAccess, (req, res) => {
+  const existing = db.prepare(`
+    SELECT payload_json AS payloadJson
+    FROM expenses
+    WHERE id = ? AND workspace_id = ?
+    LIMIT 1
+  `).get(req.params.id, req.workspaceId);
+
+  const current = safeJsonParse(existing?.payloadJson, {});
+  if (current?.linkedSource === 'purchase') {
+    return res.status(400).json({ error: 'Linked purchasing expenses are auto-generated and cannot be deleted directly' });
+  }
+
+  db.prepare(`
+    DELETE FROM expenses
+    WHERE id = ? AND workspace_id = ?
+  `).run(req.params.id, req.workspaceId);
+
+  logAudit({
+    workspaceId: req.workspaceId,
+    userId: req.user.userId,
+    action: 'delete',
+    entityType: 'expense',
+    entityId: req.params.id,
+  });
+
+  res.json({ ok: true });
+});
+createGenericModuleRoutes('cases', 'cases', 'case');
+createGenericModuleRoutes('opportunities', 'opportunities', 'opportunity');
+createGenericModuleRoutes('tasks', 'tasks', 'task');
+createGenericModuleRoutes('emails', 'emails', 'email');
+createGenericModuleRoutes('online-sales-orders', 'online_sales_orders', 'online_sales_order');
+
+// REPORTS
+app.get('/api/workspaces/:workspaceId/reports/summary', auth, requireWorkspaceAccess, (req, res) => {
+  const period = normalizeText(req.query.period || 'monthly');
+  const invoices = db.prepare(`
+    SELECT invoice_date AS date, subtotal, discount, tax, total, profit
+    FROM invoices
+    WHERE workspace_id = ?
+    ORDER BY invoice_date DESC
+  `).all(req.workspaceId);
+
+  syncAllPurchaseExpenses(req.workspaceId);
+  const expenses = getGenericRowsTable('expenses', req.workspaceId);
+  const expenseTotal = expenses.reduce((sum, row) => sum + normalizeNumber(row.amount, 0), 0);
+
+  const grouped = new Map();
+  invoices.forEach((row) => {
+    const date = new Date(row.date);
+    let key = row.date;
+    if (!Number.isNaN(date.getTime())) {
+      if (period === 'yearly') key = String(date.getFullYear());
+      else if (period === 'monthly') key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      else if (period === 'weekly') {
+        const start = new Date(date);
+        start.setDate(date.getDate() - date.getDay());
+        key = start.toISOString().slice(0, 10);
+      }
+    }
+
+    const bucket = grouped.get(key) || { label: key, sales: 0, profit: 0, invoiceCount: 0 };
+    bucket.sales += normalizeNumber(row.total, 0);
+    bucket.profit += normalizeNumber(row.profit, 0);
+    bucket.invoiceCount += 1;
+    grouped.set(key, bucket);
+  });
+
+  res.json({
+    period,
+    totals: {
+      sales: invoices.reduce((sum, row) => sum + normalizeNumber(row.total, 0), 0),
+      expenses: expenseTotal,
+      profit: invoices.reduce((sum, row) => sum + normalizeNumber(row.profit, 0), 0),
+    },
+    rows: [...grouped.values()],
+  });
+});
+
+// FULL WORKSPACE DATA
+function getWorkspaceFullData(workspaceId, userId = null) {
+  syncAllPurchaseExpenses(workspaceId);
+  const settingsBundle = getWorkspaceSettings(workspaceId, userId);
+
+  const customers = db.prepare(`
+    SELECT id, name, phone, email, address, notes, created_at AS createdAt, updated_at AS updatedAt
+    FROM customers
+    WHERE workspace_id = ?
+    ORDER BY id DESC
+  `).all(workspaceId);
+
+  const inventory = db.prepare(`
+    SELECT id, item_code AS itemCode, item_name AS itemName, current_stock AS currentStock, minimum_qty AS minimumQty, sale_price AS salePrice, cost_price AS costPrice, barcode, extra_json AS extraJson, created_at AS createdAt, updated_at AS updatedAt
+    FROM inventory_items
+    WHERE workspace_id = ?
+    ORDER BY id DESC
+  `).all(workspaceId).map((row) => ({
+    ...row,
+    ...(safeJsonParse(row.extraJson, {})),
+  }));
+
+  const purchases = db.prepare(`
+    SELECT id, purchase_date AS date, supplier, item_code AS itemCode, item_name AS itemName, quantity, cost_price AS costPrice, sale_price AS salePrice, note, extra_json AS extraJson, created_at AS createdAt, updated_at AS updatedAt
+    FROM purchases
+    WHERE workspace_id = ?
+    ORDER BY id DESC
+  `).all(workspaceId).map((row) => ({
+    ...row,
+    ...(safeJsonParse(row.extraJson, {})),
+  }));
+
+  const invoices = db.prepare('SELECT id FROM invoices WHERE workspace_id = ? ORDER BY id DESC').all(workspaceId).map((row) => getInvoiceWithItems(row.id));
+
+  return {
+    company: settingsBundle.company,
+    settings: settingsBundle.settings,
+    account: settingsBundle.account,
+    customers,
+    inventory,
+    purchases,
+    invoices,
+    expenses: getGenericRowsTable('expenses', workspaceId),
+    cases: getGenericRowsTable('cases', workspaceId),
+    opportunities: getGenericRowsTable('opportunities', workspaceId),
+    tasks: getGenericRowsTable('tasks', workspaceId),
+    returns: getGenericRowsTable('returns_refunds', workspaceId),
+    emails: getGenericRowsTable('emails', workspaceId),
+    onlineSalesOrders: getGenericRowsTable('online_sales_orders', workspaceId),
+    barcodeMappings: db.prepare(`
+      SELECT id, barcode, item_code AS itemCode, item_name AS itemName, sale_price AS salePrice, payload_json AS payloadJson, created_at AS createdAt, updated_at AS updatedAt
+      FROM barcode_mappings
+      WHERE workspace_id = ?
+      ORDER BY id DESC
+    `).all(workspaceId).map((row) => ({
+      id: String(row.id),
+      barcode: row.barcode,
+      itemCode: row.itemCode,
+      itemName: row.itemName,
+      salePrice: row.salePrice,
+      ...safeJsonParse(row.payloadJson, {}),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    })),
+  };
+}
+
+app.get('/api/workspaces/:workspaceId/full-data', auth, requireWorkspaceAccess, (req, res) => {
+  res.json(getWorkspaceFullData(req.workspaceId, req.user.userId));
+});
+
+app.put('/api/workspaces/:workspaceId/full-data', auth, requireWorkspaceAccess, (req, res) => {
+  const payload = req.body || {};
+
+  db.transaction(() => {
+    if (payload.company || payload.settings || payload.businessName || payload.invoiceTagline || payload.businessLogo) {
+      updateWorkspaceSettings(req.workspaceId, payload);
+    }
+
+    const wipeTables = [
+      'customers', 'inventory_items', 'purchases', 'invoice_items', 'invoices', 'expenses', 'cases', 'opportunities', 'tasks', 'emails', 'online_sales_orders', 'returns_refunds', 'barcode_mappings'
+    ];
+
+    wipeTables.forEach((table) => {
+      if (table === 'invoice_items') return;
+      db.prepare(`DELETE FROM ${table} WHERE workspace_id = ?`).run(req.workspaceId);
+    });
+
+    db.prepare(`
+      DELETE FROM invoice_items
+      WHERE invoice_id IN (SELECT id FROM invoices WHERE workspace_id = ?)
+    `).run(req.workspaceId);
+    db.prepare('DELETE FROM invoices WHERE workspace_id = ?').run(req.workspaceId);
+
+    (payload.customers || []).forEach((row) => {
+      db.prepare(`
+        INSERT INTO customers (workspace_id, name, phone, email, address, notes)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(req.workspaceId, normalizeText(row.name), normalizeText(row.phone), normalizeText(row.email), normalizeText(row.address), normalizeText(row.notes));
+    });
+
+    (payload.inventory || []).forEach((row) => {
+      const extras = { ...row };
+      delete extras.itemCode; delete extras.itemName; delete extras.currentStock; delete extras.minimumQty; delete extras.salePrice; delete extras.costPrice; delete extras.barcode;
+      db.prepare(`
+        INSERT INTO inventory_items (workspace_id, item_code, item_name, current_stock, minimum_qty, sale_price, cost_price, barcode, extra_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(req.workspaceId, normalizeText(row.itemCode), normalizeText(row.itemName), normalizeNumber(row.currentStock, 0), normalizeNumber(row.minimumQty, 0), normalizeNumber(row.salePrice, 0), normalizeNumber(row.costPrice, 0), normalizeText(row.barcode), json(extras));
+    });
+
+    (payload.purchases || []).forEach((row) => {
+      const extras = { ...row };
+      delete extras.date; delete extras.purchaseDate; delete extras.supplier; delete extras.itemCode; delete extras.itemName; delete extras.quantity; delete extras.costPrice; delete extras.salePrice; delete extras.note;
+      db.prepare(`
+        INSERT INTO purchases (workspace_id, purchase_date, supplier, item_code, item_name, quantity, cost_price, sale_price, note, extra_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(req.workspaceId, normalizeText(row.purchaseDate || row.date), normalizeText(row.supplier), normalizeText(row.itemCode), normalizeText(row.itemName), normalizeNumber(row.quantity, 0), normalizeNumber(row.costPrice, 0), normalizeNumber(row.salePrice, 0), normalizeText(row.note), json(extras));
+    });
+
+    (payload.invoices || []).forEach((row) => {
+      const invoice = normalizeInvoicePayload(row);
+      const invoiceResult = db.prepare(`
+        INSERT INTO invoices (workspace_id, invoice_no, invoice_date, customer_name, customer_phone, customer_address, customer_email, subtotal, discount, tax, total, profit, currency, notes, extra_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')
+      `).run(req.workspaceId, invoice.invoiceNo, invoice.invoiceDate, invoice.customerName, invoice.customerPhone, invoice.customerAddress, invoice.customerEmail, invoice.subtotal, invoice.discount, invoice.tax, invoice.total, invoice.profit, invoice.currency, invoice.notes);
+
+      invoice.items.forEach((item) => {
+        db.prepare(`
+          INSERT INTO invoice_items (invoice_id, item_code, item_name, barcode, quantity, price, cost_price, line_total, line_profit, note)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(invoiceResult.lastInsertRowid, item.itemCode, item.itemName, item.barcode, item.quantity, item.price, item.costPrice, item.lineTotal, item.lineProfit, item.note);
+      });
+    });
+
+    const importGeneric = (rows, table) => {
+      (rows || []).forEach((row) => {
+        db.prepare(`INSERT INTO ${table} (workspace_id, payload_json) VALUES (?, ?)`)
+          .run(req.workspaceId, json(row));
+      });
+    };
+
+    importGeneric((payload.expenses || []).filter((row) => row?.linkedSource !== 'purchase'), 'expenses');
+    importGeneric(payload.cases, 'cases');
+    importGeneric(payload.opportunities, 'opportunities');
+    importGeneric(payload.tasks, 'tasks');
+    importGeneric(payload.emails, 'emails');
+    importGeneric(payload.onlineSalesOrders, 'online_sales_orders');
+
+    (payload.returns || []).forEach((row) => {
+      db.prepare(`
+        INSERT INTO returns_refunds (workspace_id, invoice_no, customer, item_code, item_name, quantity, status, refund_amount, inventory_action, payload_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(req.workspaceId, normalizeText(row.invoiceNo), normalizeText(row.customer), normalizeText(row.itemCode), normalizeText(row.itemName), normalizeNumber(row.quantity, 0), normalizeText(row.status || 'Pending'), normalizeNumber(row.refundAmount, 0), normalizeText(row.inventoryAction || 'none'), json(row));
+    });
+
+    (payload.barcodeMappings || []).forEach((row) => {
+      db.prepare(`
+        INSERT INTO barcode_mappings (workspace_id, barcode, item_code, item_name, sale_price, payload_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(req.workspaceId, normalizeText(row.barcode), normalizeText(row.itemCode), normalizeText(row.itemName), normalizeNumber(row.salePrice, 0), json(row));
+    });
+
+    recalculateInventory(req.workspaceId);
+    syncAllPurchaseExpenses(req.workspaceId);
+  })();
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'import', entityType: 'full-data', entityId: req.workspaceId });
+  res.json({ ok: true, data: getWorkspaceFullData(req.workspaceId, req.user.userId) });
+});
+
+// BULK ACTIONS
+app.post('/api/workspaces/:workspaceId/bulk-delete', auth, requireWorkspaceAccess, (req, res) => {
+  const moduleName = normalizeText(req.body.module);
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map((id) => Number(id)).filter(Boolean) : [];
+  if (!moduleName || !ids.length) return res.status(400).json({ error: 'module and ids are required' });
+
+  const mapping = {
+    customers: { table: 'customers', needsRecalc: false },
+    inventory: { table: 'inventory_items', needsRecalc: false },
+    purchases: { table: 'purchases', needsRecalc: true },
+    invoices: { table: 'invoices', needsRecalc: true },
+    expenses: { table: 'expenses', needsRecalc: false },
+    cases: { table: 'cases', needsRecalc: false },
+    opportunities: { table: 'opportunities', needsRecalc: false },
+    tasks: { table: 'tasks', needsRecalc: false },
+    emails: { table: 'emails', needsRecalc: false },
+    returns: { table: 'returns_refunds', needsRecalc: true },
+    barcode: { table: 'barcode_mappings', needsRecalc: false },
+    onlineSalesOrders: { table: 'online_sales_orders', needsRecalc: false },
+  };
+
+  const target = mapping[moduleName];
+  if (!target) return res.status(400).json({ error: 'Unsupported module' });
+
+  if (moduleName === 'expenses') {
+    const protectedRows = db.prepare(`
+      SELECT id
+      FROM expenses
+      WHERE workspace_id = ?
+        AND id IN (${ids.map(() => '?').join(',')})
+        AND json_extract(payload_json, '$.linkedSource') = 'purchase'
+    `).all(req.workspaceId, ...ids);
+
+    if (protectedRows.length) {
+      return res.status(400).json({ error: 'Linked purchasing expenses are auto-generated and cannot be deleted directly' });
+    }
+  }
+
+  const placeholders = ids.map(() => '?').join(',');
+  db.prepare(`DELETE FROM ${target.table} WHERE workspace_id = ? AND id IN (${placeholders})`).run(req.workspaceId, ...ids);
+  if (target.needsRecalc) recalculateInventory(req.workspaceId);
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'bulk-delete', entityType: moduleName, details: { ids } });
+  res.json({ ok: true });
+});
+
+// BACKUP
+app.post('/api/workspaces/:workspaceId/backups', auth, requireWorkspaceAccess, (req, res) => {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const filepath = path.join(BACKUP_DIR, `workspace-${req.workspaceId}-${stamp}.json`);
+  fs.writeFileSync(filepath, JSON.stringify(getWorkspaceFullData(req.workspaceId), null, 2), 'utf8');
+
+  logAudit({ workspaceId: req.workspaceId, userId: req.user.userId, action: 'backup', entityType: 'workspace', entityId: req.workspaceId, details: { filepath } });
+  res.json({ ok: true, file: path.basename(filepath) });
+});
+
+app.get('/api/workspaces/:workspaceId/audit-log', auth, requireWorkspaceAccess, (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, action, entity_type AS entityType, entity_id AS entityId, details_json AS detailsJson, created_at AS createdAt
+    FROM audit_log
+    WHERE workspace_id = ?
+    ORDER BY id DESC
+    LIMIT 200
+  `).all(req.workspaceId).map((row) => ({
+    ...row,
+    details: safeJsonParse(row.detailsJson, null),
+  }));
+
+  res.json(rows);
+});
+
+app.post('/api/test-email', async (req, res) => {
+  try {
+    const result = await transporter.sendMail({
+      from: 'noreply@cresscox.local',
+      to: normalizeText(req.body.to || 'test@example.com'),
+      subject: normalizeText(req.body.subject || 'CresscoX test email'),
+      text: normalizeText(req.body.text || 'Email transport is working.'),
+    });
+    res.json({ ok: true, result });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to send test email' });
+  }
+});
+
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
 app.listen(PORT, () => {
   console.log(`CresscoX backend running on http://localhost:${PORT}`);
 });
-
-const mailTransporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    type: 'OAuth2',
-    user: process.env.EMAIL_USER,
-    clientId: process.env.EMAIL_CLIENT_ID,
-    clientSecret: process.env.EMAIL_CLIENT_SECRET,
-    refreshToken: process.env.EMAIL_REFRESH_TOKEN,
-  },
-});
-function randomToken() {
-  return require('crypto').randomBytes(32).toString('hex');
-}
-
-async function sendVerificationEmail(toEmail, fullName, verificationToken) {
-  const verifyUrl = `${FRONTEND_URL}/loginregister.html?verify=${verificationToken}`;
-
-  await mailTransporter.sendMail({
-    from: `"CresscoX ERP" <${process.env.EMAIL_USER}>`,
-    to: toEmail,
-    subject: 'Verify your CresscoX ERP account',
-    html: `
-      <div style="font-family:Arial,sans-serif;line-height:1.6;">
-        <h2>Welcome to CresscoX ERP</h2>
-        <p>Hello ${fullName},</p>
-        <p>Please verify your email address by clicking the button below:</p>
-        <p>
-          <a href="${verifyUrl}" style="display:inline-block;padding:12px 18px;background:#e11d2e;color:#fff;text-decoration:none;border-radius:8px;">
-            Verify Email
-          </a>
-        </p>
-        <p>If the button does not work, copy this link:</p>
-        <p>${verifyUrl}</p>
-      </div>
-    `,
-  });
-}
